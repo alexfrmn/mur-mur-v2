@@ -9,9 +9,16 @@
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b --pretty",
-    "clean": "rm -rf packages/*/dist"
+    "clean": "rm -rf packages/*/dist",
+    "demo:up": "docker compose -f deploy/docker-compose.messaging.yml up -d",
+    "demo:down": "docker compose -f deploy/docker-compose.messaging.yml down",
+    "demo:consumer": "node scripts/demo-consumer.mjs",
+    "demo:producer": "node scripts/demo-producer.mjs"
   },
   "devDependencies": {
     "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "nats": "^2.28.2"
   }
 }

@@ -1,0 +1,10 @@
+version: "3.9"
+services:
+  nats:
+    image: nats:2.10-alpine
+    container_name: murmurv2-nats
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    restart: unless-stopped

@@ -56,5 +56,33 @@ npm install
 npm run build
 ```
 
+## Run local MVP demo (NATS + 2 agents)
+
+Prerequisite: Docker/Compose installed.
+
+```bash
+npm run demo:up
+npm run demo:consumer
+# in second terminal
+npm run demo:producer
+```
+
+Expected result: consumer prints received canonical envelope metadata (`msgId`, `conversationId`, `senderAgentId`).
+
+Stop demo:
+
+```bash
+npm run demo:down
+```
+
+## Hand-off to Claude/JARVIS
+
+Share this exact flow:
+1. Clone `alexfrmn/mur-mur-v2`
+2. `npm install`
+3. `npm run demo:up`
+4. Run consumer and producer scripts
+5. Confirm envelope exchange over subject `msg.demo`
+
 ## Current status
-Initial scaffold + ADR docs committed. Implementation in progress.
+Initial scaffold + ADR docs committed. Local broker demo added; bridges/security are next.
