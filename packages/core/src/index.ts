@@ -1,5 +1,7 @@
-import { promises as fs } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, promises as fs } from "node:fs";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 export type DeliveryMode = "at-least-once";
 
@@ -96,6 +98,7 @@ export interface OutboxRecord {
   lastError?: string;
   createdAt: string;
   updatedAt: string;
+  version?: number;
 }
 
 export interface OutboxStore {
@@ -143,6 +146,7 @@ export class JsonFileOutboxStore implements OutboxStore {
       nextAttemptAt: now,
       createdAt: now,
       updatedAt: now,
+      version: 1,
     });
     await this.save(state);
   }
@@ -162,6 +166,7 @@ export class JsonFileOutboxStore implements OutboxStore {
     row.status = "sent";
     row.attempts += 1;
     row.updatedAt = new Date().toISOString();
+    row.version = (row.version ?? 0) + 1;
     await this.save(state);
   }
 
@@ -171,6 +176,7 @@ export class JsonFileOutboxStore implements OutboxStore {
     if (!row) return;
     row.status = "acked";
     row.updatedAt = new Date().toISOString();
+    row.version = (row.version ?? 0) + 1;
     await this.save(state);
   }
 
@@ -182,6 +188,7 @@ export class JsonFileOutboxStore implements OutboxStore {
     row.lastError = error;
     row.nextAttemptAt = nextAttemptAt;
     row.updatedAt = new Date().toISOString();
+    row.version = (row.version ?? 0) + 1;
     await this.save(state);
   }
 
@@ -192,7 +199,280 @@ export class JsonFileOutboxStore implements OutboxStore {
     row.status = "dlq";
     row.lastError = error;
     row.updatedAt = new Date().toISOString();
+    row.version = (row.version ?? 0) + 1;
     await this.save(state);
+  }
+}
+
+const ensureDir = (filePath: string): void => {
+  const dir = path.dirname(filePath);
+  mkdirSync(dir, { recursive: true });
+};
+
+export class SQLiteDedupeOutboxStore implements DedupeStore, OutboxStore {
+  private readonly db: DatabaseSync;
+
+  constructor(dbPath = ".data/murmur.db") {
+    ensureDir(dbPath);
+    this.db = new DatabaseSync(dbPath);
+    this.db.exec(`
+      PRAGMA journal_mode=WAL;
+      CREATE TABLE IF NOT EXISTS dedupe_seen (
+        consumer_id TEXT NOT NULL,
+        msg_id TEXT NOT NULL,
+        seen_at TEXT NOT NULL,
+        PRIMARY KEY (consumer_id, msg_id)
+      );
+      CREATE TABLE IF NOT EXISTS outbox (
+        msg_id TEXT PRIMARY KEY,
+        subject TEXT NOT NULL,
+        envelope_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TEXT NOT NULL,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1
+      );
+      CREATE INDEX IF NOT EXISTS idx_outbox_due ON outbox(status, next_attempt_at);
+    `);
+  }
+
+  async seen(msgId: string, consumerId: string): Promise<boolean> {
+    const row = this.db
+      .prepare("SELECT 1 FROM dedupe_seen WHERE consumer_id = ? AND msg_id = ? LIMIT 1")
+      .get(consumerId, msgId) as { 1: number } | undefined;
+    return !!row;
+  }
+
+  async markSeen(msgId: string, consumerId: string): Promise<void> {
+    this.db
+      .prepare(
+        "INSERT OR IGNORE INTO dedupe_seen (consumer_id, msg_id, seen_at) VALUES (?, ?, ?)",
+      )
+      .run(consumerId, msgId, new Date().toISOString());
+  }
+
+  async enqueue(subject: string, envelope: EnvelopeV1): Promise<void> {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO outbox
+        (msg_id, subject, envelope_json, status, attempts, next_attempt_at, created_at, updated_at, version)
+        VALUES (?, ?, ?, 'pending', 0, ?, ?, ?, 1)`,
+      )
+      .run(envelope.msgId, subject, JSON.stringify(envelope), now, now, now);
+  }
+
+  async claimDue(limit = 50): Promise<OutboxRecord[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM outbox
+         WHERE status IN ('pending', 'failed') AND next_attempt_at <= ?
+         ORDER BY next_attempt_at ASC
+         LIMIT ?`,
+      )
+      .all(new Date().toISOString(), limit) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => this.toOutboxRecord(row));
+  }
+
+  async markSent(msgId: string): Promise<void> {
+    await this.updateOutboxOptimistic(msgId, (row) => ({
+      status: "sent",
+      attempts: row.attempts + 1,
+      updatedAt: new Date().toISOString(),
+    }));
+  }
+
+  async markAcked(msgId: string): Promise<void> {
+    await this.updateOutboxOptimistic(msgId, () => ({
+      status: "acked",
+      updatedAt: new Date().toISOString(),
+    }));
+  }
+
+  async markFailed(msgId: string, error: string, nextAttemptAt: string): Promise<void> {
+    await this.updateOutboxOptimistic(msgId, () => ({
+      status: "failed",
+      lastError: error,
+      nextAttemptAt,
+      updatedAt: new Date().toISOString(),
+    }));
+  }
+
+  async markDlq(msgId: string, error: string): Promise<void> {
+    await this.updateOutboxOptimistic(msgId, () => ({
+      status: "dlq",
+      lastError: error,
+      updatedAt: new Date().toISOString(),
+    }));
+  }
+
+  private toOutboxRecord(row: Record<string, unknown>): OutboxRecord {
+    return {
+      msgId: String(row.msg_id),
+      subject: String(row.subject),
+      envelope: JSON.parse(String(row.envelope_json)) as EnvelopeV1,
+      status: String(row.status) as OutboxStatus,
+      attempts: Number(row.attempts),
+      nextAttemptAt: String(row.next_attempt_at),
+      lastError: row.last_error ? String(row.last_error) : undefined,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+      version: Number(row.version),
+    };
+  }
+
+  private getOutboxRow(msgId: string): OutboxRecord | undefined {
+    const row = this.db.prepare("SELECT * FROM outbox WHERE msg_id = ?").get(msgId) as Record<string, unknown> | undefined;
+    return row ? this.toOutboxRecord(row) : undefined;
+  }
+
+  private async updateOutboxOptimistic(
+    msgId: string,
+    mutate: (current: OutboxRecord) => Partial<OutboxRecord>,
+  ): Promise<void> {
+    for (let i = 0; i < 3; i += 1) {
+      const current = this.getOutboxRow(msgId);
+      if (!current) return;
+
+      const patch = mutate(current);
+      const nextStatus = patch.status ?? current.status;
+      const nextAttempts = patch.attempts ?? current.attempts;
+      const nextNextAttemptAt = patch.nextAttemptAt ?? current.nextAttemptAt;
+      const nextLastError = patch.lastError ?? current.lastError ?? null;
+      const nextUpdatedAt = patch.updatedAt ?? new Date().toISOString();
+      const changed = this.db
+        .prepare(
+          `UPDATE outbox
+           SET status = ?, attempts = ?, next_attempt_at = ?, last_error = ?, updated_at = ?, version = version + 1
+           WHERE msg_id = ? AND version = ?`,
+        )
+        .run(
+          nextStatus,
+          nextAttempts,
+          nextNextAttemptAt,
+          nextLastError,
+          nextUpdatedAt,
+          msgId,
+          current.version ?? 1,
+        );
+
+      if (changed.changes > 0) return;
+    }
+    throw new Error(`optimistic-lock-failed: ${msgId}`);
+  }
+}
+
+export interface SqlExecutor {
+  query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<{ rows: T[]; rowCount: number }>;
+}
+
+export class PgSqlExecutor implements SqlExecutor {
+  constructor(private readonly connectionString: string) {}
+
+  async query<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<{ rows: T[]; rowCount: number }> {
+    const { Client } = await import("pg");
+    const client = new Client({ connectionString: this.connectionString });
+    await client.connect();
+    try {
+      const res = await client.query(sql, params);
+      return { rows: res.rows as T[], rowCount: res.rowCount ?? 0 };
+    } finally {
+      await client.end();
+    }
+  }
+}
+
+export interface LocalMessageRecord {
+  id: string;
+  conversationId: string;
+  msgId: string;
+  direction: "inbound" | "outbound";
+  sender: string;
+  text: string;
+  createdAt: string;
+  transport?: string;
+}
+
+export class SQLiteMessageStore {
+  private readonly db: DatabaseSync;
+
+  constructor(dbPath = ".data/murmur.db") {
+    ensureDir(dbPath);
+    this.db = new DatabaseSync(dbPath);
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS local_messages (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        msg_id TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        sender TEXT NOT NULL,
+        text TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        transport TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_local_messages_conversation ON local_messages(conversation_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_local_messages_text ON local_messages(text);
+    `);
+  }
+
+  async append(input: Omit<LocalMessageRecord, "id">): Promise<LocalMessageRecord> {
+    const row: LocalMessageRecord = { id: randomUUID(), ...input };
+    this.db
+      .prepare(
+        `INSERT INTO local_messages
+         (id, conversation_id, msg_id, direction, sender, text, created_at, transport)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        row.id,
+        row.conversationId,
+        row.msgId,
+        row.direction,
+        row.sender,
+        row.text,
+        row.createdAt,
+        row.transport ?? null,
+      );
+    return row;
+  }
+
+  async listConversations(limit = 50): Promise<Array<{ conversationId: string; lastMessageAt: string; messageCount: number }>> {
+    const rows = this.db
+      .prepare(
+        `SELECT conversation_id as conversationId, MAX(created_at) as lastMessageAt, COUNT(*) as messageCount
+         FROM local_messages
+         GROUP BY conversation_id
+         ORDER BY lastMessageAt DESC
+         LIMIT ?`,
+      )
+      .all(limit) as Array<{ conversationId: string; lastMessageAt: string; messageCount: number }>;
+    return rows;
+  }
+
+  async searchMessages(query: string, limit = 50): Promise<LocalMessageRecord[]> {
+    const q = `%${query}%`;
+    const rows = this.db
+      .prepare(
+        `SELECT
+           id,
+           conversation_id as conversationId,
+           msg_id as msgId,
+           direction,
+           sender,
+           text,
+           created_at as createdAt,
+           transport
+         FROM local_messages
+         WHERE text LIKE ? OR sender LIKE ? OR conversation_id LIKE ?
+         ORDER BY created_at DESC
+         LIMIT ?`,
+      )
+      .all(q, q, q, limit) as unknown as LocalMessageRecord[];
+    return rows;
   }
 }
 
