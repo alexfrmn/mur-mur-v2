@@ -87,7 +87,8 @@ Share this exact flow:
 ## Current status
 - scaffold + ADR docs committed
 - local broker demo added
-- `@murmurv2/core`: envelope guards + ACK helper + in-memory idempotency store
+- `@murmurv2/core`: envelope guards + ACK helper + in-memory idempotency + **file-persistent** dedupe/outbox stores
 - `@murmurv2/broker-nats`: real connect/publish + subscribe-with-ack path with dedupe checks
+- `@murmurv2/broker-nats`: outbox flush skeleton with retry/backoff + DLQ status transitions
 
-Next: persistent idempotency store (SQLite/Postgres), retry/backoff worker, DLQ, optimistic locking.
+Next: ACK correlation to mark outbox records `acked`, then SQLite/Postgres optimistic-locking store.

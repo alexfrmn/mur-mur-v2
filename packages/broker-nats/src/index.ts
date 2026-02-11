@@ -1,5 +1,12 @@
 import { connect, type NatsConnection, StringCodec, type Subscription } from "nats";
-import { createAck, type EnvelopeV1, isEnvelopeV1, type DedupeStore } from "@murmurv2/core";
+import {
+  computeBackoffMs,
+  createAck,
+  type EnvelopeV1,
+  isEnvelopeV1,
+  type DedupeStore,
+  type OutboxStore,
+} from "@murmurv2/core";
 
 export interface BrokerConfig {
   url: string;
@@ -72,5 +79,41 @@ export class NatsBroker {
     })().catch(() => undefined);
 
     return sub;
+  }
+
+  /**
+   * Basic outbox worker skeleton:
+   * - picks due records
+   * - publishes
+   * - marks sent/failed/dlq
+   * NOTE: ACK correlation from ack subject is next increment.
+   */
+  async flushOutbox(params: {
+    outbox: OutboxStore;
+    maxAttempts?: number;
+    batchSize?: number;
+    baseBackoffMs?: number;
+  }): Promise<void> {
+    const maxAttempts = params.maxAttempts ?? 5;
+    const due = await params.outbox.claimDue(params.batchSize ?? 50);
+
+    for (const rec of due) {
+      try {
+        await this.publish(rec.subject, rec.envelope);
+        await params.outbox.markSent(rec.msgId);
+      } catch (err) {
+        const nextAttemptNum = rec.attempts + 1;
+        const reason = err instanceof Error ? err.message : "publish-failed";
+
+        if (nextAttemptNum >= maxAttempts) {
+          await params.outbox.markDlq(rec.msgId, reason);
+          continue;
+        }
+
+        const backoffMs = computeBackoffMs(nextAttemptNum, params.baseBackoffMs ?? 500);
+        const nextAt = new Date(Date.now() + backoffMs).toISOString();
+        await params.outbox.markFailed(rec.msgId, reason, nextAt);
+      }
+    }
   }
 }
