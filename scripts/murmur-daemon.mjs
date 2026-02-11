@@ -12,6 +12,7 @@
  * Usage: node scripts/murmur-daemon.mjs
  * Env: DATA_DIR (default: .data), FLUSH_INTERVAL_MS (default: 2000)
  */
+import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -111,6 +112,24 @@ const onMessage = async (envelope) => {
     conversationId: envelope.conversationId,
     textLen: plaintext.length,
   });
+
+  // --- onReceive hook: notify external system ---
+  if (config.onReceive) {
+    try {
+      const env = {
+        ...process.env,
+        MURMUR_FROM: senderId,
+        MURMUR_TEXT: plaintext,
+        MURMUR_MSG_ID: envelope.msgId,
+        MURMUR_CONVERSATION_ID: envelope.conversationId,
+      };
+      execFile("sh", ["-c", config.onReceive], { env, timeout: 10_000 }, (err) => {
+        if (err) log("warn", "onReceive hook failed", { error: err.message });
+      });
+    } catch (err) {
+      log("warn", "onReceive hook error", { error: err.message });
+    }
+  }
 };
 
 // --- Outbox flush loop ---
