@@ -85,4 +85,9 @@ Share this exact flow:
 5. Confirm envelope exchange over subject `msg.demo`
 
 ## Current status
-Initial scaffold + ADR docs committed. Local broker demo added; bridges/security are next.
+- scaffold + ADR docs committed
+- local broker demo added
+- `@murmurv2/core`: envelope guards + ACK helper + in-memory idempotency store
+- `@murmurv2/broker-nats`: real connect/publish + subscribe-with-ack path with dedupe checks
+
+Next: persistent idempotency store (SQLite/Postgres), retry/backoff worker, DLQ, optimistic locking.
