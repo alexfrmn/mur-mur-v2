@@ -108,6 +108,7 @@ export interface OutboxStore {
   markAcked(msgId: string): Promise<void>;
   markFailed(msgId: string, error: string, nextAttemptAt: string): Promise<void>;
   markDlq(msgId: string, error: string): Promise<void>;
+  requeueStaleSent?(ackTimeoutMs: number, reason?: string): Promise<number>;
 }
 
 interface JsonOutboxState {
@@ -201,6 +202,27 @@ export class JsonFileOutboxStore implements OutboxStore {
     row.updatedAt = new Date().toISOString();
     row.version = (row.version ?? 0) + 1;
     await this.save(state);
+  }
+
+  async requeueStaleSent(ackTimeoutMs: number, reason = "ack-timeout"): Promise<number> {
+    const state = await this.load();
+    const now = Date.now();
+    let changed = 0;
+    for (const row of state.records) {
+      if (row.status !== "sent") continue;
+      const ageMs = now - new Date(row.updatedAt).getTime();
+      if (ageMs < ackTimeoutMs) continue;
+      row.status = "failed";
+      row.lastError = reason;
+      row.nextAttemptAt = new Date(now).toISOString();
+      row.updatedAt = new Date(now).toISOString();
+      row.version = (row.version ?? 0) + 1;
+      changed += 1;
+    }
+    if (changed > 0) {
+      await this.save(state);
+    }
+    return changed;
   }
 }
 
@@ -308,6 +330,22 @@ export class SQLiteDedupeOutboxStore implements DedupeStore, OutboxStore {
       lastError: error,
       updatedAt: new Date().toISOString(),
     }));
+  }
+
+  async requeueStaleSent(ackTimeoutMs: number, reason = "ack-timeout"): Promise<number> {
+    const threshold = new Date(Date.now() - ackTimeoutMs).toISOString();
+    const res = this.db
+      .prepare(
+        `UPDATE outbox
+         SET status = 'failed',
+             last_error = ?,
+             next_attempt_at = ?,
+             updated_at = ?,
+             version = version + 1
+         WHERE status = 'sent' AND updated_at <= ?`,
+      )
+      .run(reason, new Date().toISOString(), new Date().toISOString(), threshold);
+    return Number(res.changes ?? 0);
   }
 
   private toOutboxRecord(row: Record<string, unknown>): OutboxRecord {
@@ -505,4 +543,45 @@ export const createAck = (
 export const computeBackoffMs = (attempt: number, baseMs = 500, maxMs = 60_000): number => {
   const raw = baseMs * Math.pow(2, Math.max(0, attempt - 1));
   return Math.min(maxMs, raw);
+};
+
+export const applyJitter = (baseMs: number, jitterRatio = 0.2): number => {
+  const ratio = Math.max(0, Math.min(1, jitterRatio));
+  const min = Math.max(0, baseMs * (1 - ratio));
+  const max = baseMs * (1 + ratio);
+  return Math.round(min + Math.random() * (max - min));
+};
+
+export interface SecurityPolicy {
+  maxPayloadBytes?: number;
+  allowedRoutes?: Record<string, string[]>;
+}
+
+export const estimateBase64DecodedBytes = (base64: string): number => {
+  const normalized = base64.replace(/\s+/g, "");
+  if (normalized.length === 0) return 0;
+  const padding = (normalized.match(/=+$/)?.[0].length ?? 0);
+  return Math.floor((normalized.length * 3) / 4) - padding;
+};
+
+export const validateEnvelopePolicy = (envelope: EnvelopeV1, policy?: SecurityPolicy): string[] => {
+  if (!policy) return [];
+  const violations: string[] = [];
+
+  if (typeof policy.maxPayloadBytes === "number") {
+    const size = estimateBase64DecodedBytes(envelope.payloadCiphertext);
+    if (size > policy.maxPayloadBytes) {
+      violations.push(`payload-too-large:${size}>${policy.maxPayloadBytes}`);
+    }
+  }
+
+  if (policy.allowedRoutes) {
+    const allowed = policy.allowedRoutes[envelope.senderAgentId] ?? [];
+    const denied = envelope.recipients.filter((r) => !allowed.includes(r));
+    if (denied.length > 0) {
+      violations.push(`recipient-not-allowed:${denied.join(",")}`);
+    }
+  }
+
+  return violations;
 };
