@@ -7,7 +7,7 @@ import { ensureDemoKeys, loadDemoConfig, policyFromConfig, stableEnvelopePayload
 const cfg = loadDemoConfig();
 const keys = await ensureDemoKeys(cfg.keysPath);
 
-const broker = new NatsBroker({ url: cfg.natsUrl });
+const broker = new NatsBroker({ url: cfg.natsUrl, token: cfg.natsToken });
 const dedupe = new SQLiteDedupeOutboxStore(cfg.dedupeDbPath);
 const policy = policyFromConfig(cfg);
 

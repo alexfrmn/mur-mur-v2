@@ -9,7 +9,7 @@ import { ensureDemoKeys, loadDemoConfig, policyFromConfig, stableEnvelopePayload
 const cfg = loadDemoConfig();
 const keys = await ensureDemoKeys(cfg.keysPath);
 
-const broker = new NatsBroker({ url: cfg.natsUrl });
+const broker = new NatsBroker({ url: cfg.natsUrl, token: cfg.natsToken });
 const outbox = new SQLiteDedupeOutboxStore(cfg.outboxDbPath);
 
 const waitForAck = async (dbPath, msgId, timeoutMs) => {

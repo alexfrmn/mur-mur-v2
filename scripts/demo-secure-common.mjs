@@ -15,6 +15,7 @@ export const loadDemoConfig = () => {
 
   return {
     natsUrl: process.env.NATS_URL || "nats://127.0.0.1:4222",
+    natsToken: process.env.NATS_TOKEN || undefined,
     subject: process.env.SUBJECT || "msg.demo.secure",
     consumerId: process.env.CONSUMER_ID || recipientAgentId,
     outboxDbPath: process.env.OUTBOX_DB_PATH || ".data/demo-outbox.db",
