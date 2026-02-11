@@ -87,7 +87,75 @@ const inbound = await bridge.inbound();
 console.log(inbound.envelopes);
 ```
 
-## Basic MCP server
+## Agent-to-Agent Messaging (Murmur Daemon)
+
+Persistent encrypted messaging between agents over NATS. Each agent runs a daemon that automatically delivers and receives messages. Agents interact via MCP tools (`murmur_send`, `murmur_inbox`, `murmur_peers`).
+
+### Architecture
+
+```
+Agent A (Claude CLI)                    Agent B (Claude CLI)
+     │ MCP stdio                             ▲ MCP stdio
+┌────┴──────┐                          ┌─────┴─────┐
+│ MCP Server │                          │ MCP Server │
+│ send→outbox│                          │ inbox←store│
+└────┬───────┘                          └─────▲──────┘
+     │ shared SQLite                          │ shared SQLite
+┌────┴──────────┐    NATS JetStream    ┌──────┴─────────┐
+│ murmur-daemon  │◄═══════════════════►│ murmur-daemon   │
+│ outbox flush   │  encrypted envelopes │ subscribe       │
+│ subscribe      │  + ACK correlation   │ outbox flush    │
+└────────────────┘                      └─────────────────┘
+```
+
+### Prerequisites
+
+- **Node.js 22+** (uses `node:sqlite`)
+- **NATS server** with JetStream enabled:
+  ```bash
+  # Quick start with Docker:
+  docker run -d --name nats -p 4222:4222 nats:2.10-alpine -js --auth YOUR_SECRET_TOKEN
+  ```
+
+### Quick Start
+
+```bash
+# 1. Clone & build
+git clone https://github.com/alexfrmn/mur-mur-v2.git
+cd mur-mur-v2
+npm install && npm run build
+
+# 2. Generate agent identity (interactive)
+node scripts/agent-config-init.mjs
+# → creates .data/agent-config.json with X25519 + Ed25519 keypairs
+# → prints public keys to share with peers
+
+# 3. Add peer public keys to .data/agent-config.json:
+#   "peers": {
+#     "agent-codex": {
+#       "encryption": { "publicKey": "<peer-encryption-pubkey>" },
+#       "signing": { "publicKey": "<peer-signing-pubkey>" },
+#       "subject": "msg.agent-codex"
+#     }
+#   }
+
+# 4. Start daemon
+node scripts/murmur-daemon.mjs
+# Or via systemd (production):
+sudo cp deploy/murmur-daemon.service /etc/systemd/system/
+sudo systemctl enable --now murmur-daemon
+```
+
+### Non-interactive setup (CI/scripts)
+
+```bash
+AGENT_ID=agent-jarvis \
+NATS_URL=nats://127.0.0.1:4222 \
+NATS_TOKEN=your-token \
+  node scripts/agent-config-init.mjs
+```
+
+### MCP Server
 
 Build first, then run:
 
@@ -96,13 +164,19 @@ npm run build
 npm run mcp:server
 ```
 
-The server speaks line-delimited JSON-RPC over stdio and supports `initialize`, `tools/list`, and `tools/call` for:
+The server speaks line-delimited JSON-RPC over stdio and supports `initialize`, `tools/list`, and `tools/call`.
 
-- `send_message`
-- `list_conversations`
-- `search_messages`
+**Local-only tools** (always available):
+- `send_message` — store local outbound message
+- `list_conversations` — list conversations
+- `search_messages` — search by text/sender/conversation
 
-Use `MURMUR_STORE_PATH` to point to the SQLite DB file.
+**Agent-to-agent tools** (require `.data/agent-config.json`):
+- `murmur_send` — encrypt + sign + enqueue message to peer (daemon delivers)
+- `murmur_inbox` — read inbound messages from other agents
+- `murmur_peers` — list known peers and key status
+
+Use `MURMUR_STORE_PATH` or `DATA_DIR` to configure the SQLite DB location.
 
 ## Outbox ACK correlation usage
 
