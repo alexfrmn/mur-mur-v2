@@ -6,6 +6,7 @@ import {
   isEnvelopeV1,
   type DedupeStore,
   type OutboxStore,
+  type AckV1,
 } from "@murmurv2/core";
 
 export interface BrokerConfig {
@@ -81,12 +82,35 @@ export class NatsBroker {
     return sub;
   }
 
+  async startAckCorrelation(params: {
+    outbox: OutboxStore;
+    ackSubject: string;
+  }): Promise<Subscription> {
+    await this.connect();
+    const sub = this.nc!.subscribe(params.ackSubject);
+
+    (async () => {
+      for await (const m of sub) {
+        try {
+          const decoded = JSON.parse(this.sc.decode(m.data)) as AckV1;
+          if (decoded.status === "ack" && typeof decoded.msgId === "string") {
+            await params.outbox.markAcked(decoded.msgId);
+          }
+        } catch {
+          // ignore malformed ack frames
+        }
+      }
+    })().catch(() => undefined);
+
+    return sub;
+  }
+
   /**
-   * Basic outbox worker skeleton:
+   * Basic outbox worker:
    * - picks due records
    * - publishes
    * - marks sent/failed/dlq
-   * NOTE: ACK correlation from ack subject is next increment.
+   * - ACK correlation handled via startAckCorrelation(...)
    */
   async flushOutbox(params: {
     outbox: OutboxStore;
