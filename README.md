@@ -177,7 +177,24 @@ This only enables scaffolded interfaces right now. See `docs/MLS-SCAFFOLD.md`.
 npm test
 ```
 
-## Local demo (NATS)
+## Secure local demo (default)
+
+The demo producer/consumer scripts now run a secure end-to-end flow by default:
+
+- producer encrypts payload + signs envelope with the active crypto provider
+- producer enqueues to SQLite outbox and flushes via broker policy checks
+- consumer verifies route/payload policy, verifies signature, decrypts payload, and ACKs
+- producer correlates ACKs back to outbox row status
+
+### One-command smoke test
+
+```bash
+npm run demo:secure
+```
+
+This will build, start local NATS, run secure consumer + producer, and tear down services.
+
+### Manual run
 
 ```bash
 npm run demo:up
@@ -186,3 +203,33 @@ npm run demo:consumer
 npm run demo:producer
 npm run demo:down
 ```
+
+### Demo environment knobs
+
+```bash
+# transport
+export NATS_URL="nats://127.0.0.1:4222"
+export SUBJECT="msg.demo.secure"
+
+# identities / policy route
+export SENDER_AGENT_ID="agent-codex"
+export RECIPIENT_AGENT_ID="agent-jarvis"
+export CONSUMER_ID="agent-jarvis"
+
+# data paths
+export OUTBOX_DB_PATH=".data/demo-outbox.db"
+export DEDUPE_DB_PATH=".data/demo-dedupe.db"
+export DEMO_KEYS_PATH=".data/demo-keys.json"
+
+# payload + reliability controls
+export MESSAGE="hello secure mur-mur"
+export MAX_PAYLOAD_BYTES="65536"
+export ACK_TIMEOUT_MS="15000"
+export WAIT_FOR_ACK_MS="15000"
+export FLUSH_MAX_ATTEMPTS="5"
+
+# consumer behavior (default exits after first verified message)
+export DEMO_EXIT_AFTER_ONE="1"
+```
+
+Failure logs are explicit (`[producer] secure demo failed`, `[consumer] secure demo failed`, `[smoke] ... FAIL`) so CI/manual runs can quickly identify policy/crypto/outbox failures.
