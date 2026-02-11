@@ -35,14 +35,32 @@ export interface DedupeStore {
 }
 
 export class InMemoryDedupeStore implements DedupeStore {
-  private readonly keys = new Set<string>();
+  private readonly keys: Map<string, true>;
+  private readonly maxSize: number;
+
+  constructor(maxSize = 10_000) {
+    this.keys = new Map<string, true>();
+    this.maxSize = Math.max(1, Math.floor(maxSize));
+  }
 
   async seen(msgId: string, consumerId: string): Promise<boolean> {
     return this.keys.has(`${consumerId}:${msgId}`);
   }
 
   async markSeen(msgId: string, consumerId: string): Promise<void> {
-    this.keys.add(`${consumerId}:${msgId}`);
+    this.keys.set(`${consumerId}:${msgId}`, true);
+    this.evictIfNeeded();
+  }
+
+  private evictIfNeeded(): void {
+    if (this.keys.size <= this.maxSize) return;
+    const evictCount = Math.max(1, Math.ceil(this.maxSize * 0.1));
+    const oldest = this.keys.keys();
+    for (let i = 0; i < evictCount; i += 1) {
+      const next = oldest.next();
+      if (next.done) break;
+      this.keys.delete(next.value);
+    }
   }
 }
 

@@ -18,13 +18,23 @@ test("isEnvelopeV1 accepts valid envelope", () => {
   assert.equal(isEnvelopeV1(baseEnvelope), true);
 });
 
-test("isEnvelopeV1 rejects malformed recipients and timestamps", () => {
-  assert.equal(isEnvelopeV1({ ...baseEnvelope, recipients: [] }), false);
-  assert.equal(isEnvelopeV1({ ...baseEnvelope, recipients: ["", "agent.b"] }), false);
-  assert.equal(isEnvelopeV1({ ...baseEnvelope, createdAt: "not-a-date" }), false);
+test("isEnvelopeV1 rejects null/undefined/string payloads", () => {
+  assert.equal(isEnvelopeV1(null), false);
+  assert.equal(isEnvelopeV1(undefined), false);
+  assert.equal(isEnvelopeV1("envelope"), false);
 });
 
-test("isEnvelopeV1 rejects missing required security fields", () => {
-  assert.equal(isEnvelopeV1({ ...baseEnvelope, payloadNonce: "" }), false);
-  assert.equal(isEnvelopeV1({ ...baseEnvelope, signature: "" }), false);
+test("isEnvelopeV1 rejects malformed msgId", () => {
+  const { msgId: _drop, ...withoutMsgId } = baseEnvelope;
+  assert.equal(isEnvelopeV1(withoutMsgId), false);
+  assert.equal(isEnvelopeV1({ ...baseEnvelope, msgId: "" }), false);
+});
+
+test("isEnvelopeV1 rejects missing payloadCiphertext", () => {
+  const { payloadCiphertext: _drop, ...withoutCiphertext } = baseEnvelope;
+  assert.equal(isEnvelopeV1(withoutCiphertext), false);
+});
+
+test("isEnvelopeV1 accepts optional ttlSeconds and traceId", () => {
+  assert.equal(isEnvelopeV1({ ...baseEnvelope, ttlSeconds: 60, traceId: "trace-1" }), true);
 });

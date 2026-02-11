@@ -124,7 +124,10 @@ export class NatsBroker {
           await this.publishAck(ackSubject, createAck(msgId, params.consumerId, "nack", reason));
         }
       }
-    })().catch(() => undefined);
+    })().catch((err) => {
+      const e = err instanceof Error ? err : new Error(String(err));
+      console.error("[NatsBroker.subscribeWithAck] loop crashed", { message: e.message, stack: e.stack });
+    });
 
     return sub;
   }
@@ -154,11 +157,19 @@ export class NatsBroker {
               new Date().toISOString(),
             );
           }
-        } catch {
-          // ignore malformed ack frames
+        } catch (err) {
+          const e = err instanceof Error ? err : new Error(String(err));
+          console.error("[NatsBroker.startAckCorrelation] malformed ack frame", {
+            message: e.message,
+            stack: e.stack,
+            raw: this.sc.decode(m.data),
+          });
         }
       }
-    })().catch(() => undefined);
+    })().catch((err) => {
+      const e = err instanceof Error ? err : new Error(String(err));
+      console.error("[NatsBroker.startAckCorrelation] loop crashed", { message: e.message, stack: e.stack });
+    });
 
     return sub;
   }

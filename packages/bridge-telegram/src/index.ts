@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { SQLiteMessageStore, type EnvelopeV1 } from "@murmurv2/core";
+import type { CryptoProvider } from "@murmurv2/security";
+
+const UNSIGNED_MARKER = "unsigned";
 
 export interface TelegramBridgeConfig {
   botToken: string;
@@ -9,6 +12,12 @@ export interface TelegramBridgeConfig {
   recipientAgentId?: string;
   apiBase?: string;
   messageStorePath?: string;
+  /**
+   * Optional crypto provider used for envelope signing.
+   * Consumers should treat envelopes as unsigned when payloadNonce/signature are both "unsigned".
+   */
+  cryptoProvider?: CryptoProvider;
+  signingPrivateKey?: string;
 }
 
 interface TelegramUpdate {
@@ -33,6 +42,10 @@ const validateTelegramBridgeConfig = (cfg: TelegramBridgeConfig): void => {
   if (errs.length > 0) throw new Error(`invalid-telegram-bridge-config: ${errs.join("; ")}`);
 };
 
+export const isEnvelopeSigned = (env: EnvelopeV1): boolean => {
+  return env.payloadNonce !== UNSIGNED_MARKER && env.signature !== UNSIGNED_MARKER;
+};
+
 export class TelegramBridge {
   private readonly cfg: TelegramBridgeConfig;
   private readonly store: SQLiteMessageStore;
@@ -46,6 +59,8 @@ export class TelegramBridge {
       recipientAgentId: config?.recipientAgentId ?? process.env.MURMUR_TELEGRAM_RECIPIENT_AGENT_ID ?? "human",
       apiBase: config?.apiBase ?? "https://api.telegram.org",
       messageStorePath: config?.messageStorePath ?? process.env.MURMUR_STORE_PATH ?? ".data/murmur.db",
+      cryptoProvider: config?.cryptoProvider,
+      signingPrivateKey: config?.signingPrivateKey ?? process.env.MURMUR_TELEGRAM_SIGNING_PRIVATE_KEY,
     };
     validateTelegramBridgeConfig(this.cfg);
     this.store = new SQLiteMessageStore(this.cfg.messageStorePath);
@@ -54,6 +69,34 @@ export class TelegramBridge {
   private endpoint(method: string): string {
     if (!this.cfg.botToken) throw new Error("missing MURMUR_TELEGRAM_BOT_TOKEN");
     return `${this.cfg.apiBase}/bot${this.cfg.botToken}/${method}`;
+  }
+
+  private async signEnvelopePayload(payloadCiphertext: string): Promise<{ payloadNonce: string; signature: string }> {
+    if (this.cfg.cryptoProvider && this.cfg.signingPrivateKey) {
+      const signature = await this.cfg.cryptoProvider.sign(payloadCiphertext, this.cfg.signingPrivateKey);
+      return { payloadNonce: "signed", signature };
+    }
+    return { payloadNonce: UNSIGNED_MARKER, signature: UNSIGNED_MARKER };
+  }
+
+  private async toInboundEnvelope(msg: TelegramUpdate["message"]): Promise<EnvelopeV1> {
+    const text = msg?.text ?? "";
+    const payloadCiphertext = Buffer.from(text, "utf8").toString("base64");
+    const sender = msg?.from?.username ?? `telegram:${msg?.from?.id ?? "unknown"}`;
+    const conversationId = `telegram:${msg?.chat.id}:${msg?.message_thread_id ?? "main"}`;
+    const signatureFields = await this.signEnvelopePayload(payloadCiphertext);
+
+    return {
+      schemaVersion: "1.0",
+      msgId: `telegram-${msg?.message_id}`,
+      conversationId,
+      senderAgentId: sender,
+      recipients: [this.cfg.recipientAgentId ?? "human"],
+      createdAt: new Date((msg?.date ?? 0) * 1000).toISOString(),
+      payloadCiphertext,
+      payloadNonce: signatureFields.payloadNonce,
+      signature: signatureFields.signature,
+    };
   }
 
   private async callTelegram<T>(method: string, payload: Record<string, unknown>): Promise<T> {
@@ -117,25 +160,13 @@ export class TelegramBridge {
       if (String(msg.chat.id) !== this.cfg.defaultChatId) continue;
       if (this.cfg.defaultTopicId && String(msg.message_thread_id ?? "") !== this.cfg.defaultTopicId) continue;
 
-      const sender = msg.from?.username ?? `telegram:${msg.from?.id ?? "unknown"}`;
-      const conversationId = `telegram:${msg.chat.id}:${msg.message_thread_id ?? "main"}`;
-      const envelope: EnvelopeV1 = {
-        schemaVersion: "1.0",
-        msgId: `telegram-${msg.message_id}`,
-        conversationId,
-        senderAgentId: sender,
-        recipients: [this.cfg.recipientAgentId ?? "human"],
-        createdAt: new Date(msg.date * 1000).toISOString(),
-        payloadCiphertext: Buffer.from(msg.text, "utf8").toString("base64"),
-        payloadNonce: "plain",
-        signature: "telegram-bridge",
-      };
+      const envelope = await this.toInboundEnvelope(msg);
 
       await this.store.append({
-        conversationId,
+        conversationId: envelope.conversationId,
         msgId: envelope.msgId,
         direction: "inbound",
-        sender,
+        sender: envelope.senderAgentId,
         text: msg.text,
         createdAt: envelope.createdAt,
         transport: "telegram",
@@ -148,6 +179,8 @@ export class TelegramBridge {
   }
 
   toOutboundEnvelope(input: { text: string; conversationId?: string; recipients?: string[] }): EnvelopeV1 {
+    const payloadCiphertext = Buffer.from(input.text, "utf8").toString("base64");
+
     return {
       schemaVersion: "1.0",
       msgId: randomUUID(),
@@ -155,9 +188,26 @@ export class TelegramBridge {
       senderAgentId: this.cfg.senderAgentId ?? "telegram-bridge",
       recipients: input.recipients ?? [this.cfg.recipientAgentId ?? "human"],
       createdAt: new Date().toISOString(),
-      payloadCiphertext: Buffer.from(input.text, "utf8").toString("base64"),
-      payloadNonce: "plain",
-      signature: "telegram-bridge",
+      payloadCiphertext,
+      payloadNonce: UNSIGNED_MARKER,
+      signature: UNSIGNED_MARKER,
+    };
+  }
+
+  async toOutboundEnvelopeSigned(input: { text: string; conversationId?: string; recipients?: string[] }): Promise<EnvelopeV1> {
+    const payloadCiphertext = Buffer.from(input.text, "utf8").toString("base64");
+    const signatureFields = await this.signEnvelopePayload(payloadCiphertext);
+
+    return {
+      schemaVersion: "1.0",
+      msgId: randomUUID(),
+      conversationId: input.conversationId ?? `telegram:${this.cfg.defaultChatId}:${this.cfg.defaultTopicId ?? "main"}`,
+      senderAgentId: this.cfg.senderAgentId ?? "telegram-bridge",
+      recipients: input.recipients ?? [this.cfg.recipientAgentId ?? "human"],
+      createdAt: new Date().toISOString(),
+      payloadCiphertext,
+      payloadNonce: signatureFields.payloadNonce,
+      signature: signatureFields.signature,
     };
   }
 }
