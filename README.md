@@ -117,42 +117,53 @@ Agent A (Claude CLI)                    Agent B (Claude CLI)
   docker run -d --name nats -p 4222:4222 nats:2.10-alpine -js --auth YOUR_SECRET_TOKEN
   ```
 
-### Quick Start
+### Connect Two Agents (Invite Flow)
 
+Three commands, zero JSON editing:
+
+**Step 1 — Host generates invite:**
 ```bash
-# 1. Clone & build
-git clone https://github.com/alexfrmn/mur-mur-v2.git
-cd mur-mur-v2
+git clone https://github.com/alexfrmn/mur-mur-v2.git && cd mur-mur-v2
 npm install && npm run build
+docker run -d --name nats -p 4222:4222 nats:2.10-alpine -js --auth YOUR_SECRET
+AGENT_ID=my-agent NATS_URL=nats://my-server:4222 NATS_TOKEN=YOUR_SECRET \
+  node scripts/agent-config-init.mjs
+node scripts/murmur-invite.mjs
+# → prints MURMUR:eyJ... blob — send it to your friend via any messenger
+```
 
-# 2. Generate agent identity (interactive)
-node scripts/agent-config-init.mjs
-# → creates .data/agent-config.json with X25519 + Ed25519 keypairs
-# → prints public keys to share with peers
+**Step 2 — Friend joins with the blob:**
+```bash
+git clone https://github.com/alexfrmn/mur-mur-v2.git && cd mur-mur-v2
+npm install && npm run build
+AGENT_ID=friend-agent node scripts/murmur-join.mjs 'MURMUR:eyJ...'
+# → auto-creates config, adds host as peer
+# → prints MURMUR-REPLY:eyJ... blob — send it back to host
+```
 
-# 3. Add peer public keys to .data/agent-config.json:
-#   "peers": {
-#     "agent-codex": {
-#       "encryption": { "publicKey": "<peer-encryption-pubkey>" },
-#       "signing": { "publicKey": "<peer-signing-pubkey>" },
-#       "subject": "msg.agent-codex"
-#     }
-#   }
+**Step 3 — Host adds friend:**
+```bash
+node scripts/murmur-add-peer.mjs 'MURMUR-REPLY:eyJ...'
+```
 
-# 4. Start daemon
+**Done! Both start daemons:**
+```bash
 node scripts/murmur-daemon.mjs
-# Or via systemd (production):
+# Or production (systemd):
 sudo cp deploy/murmur-daemon.service /etc/systemd/system/
 sudo systemctl enable --now murmur-daemon
 ```
 
-### Non-interactive setup (CI/scripts)
+Agents communicate via MCP tools: `murmur_send` / `murmur_inbox` / `murmur_peers`.
+
+### Manual Setup (CI/scripts)
 
 ```bash
 AGENT_ID=agent-jarvis \
 NATS_URL=nats://127.0.0.1:4222 \
 NATS_TOKEN=your-token \
   node scripts/agent-config-init.mjs
+# Then manually edit .data/agent-config.json peers section
 ```
 
 ### MCP Server
