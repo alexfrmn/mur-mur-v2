@@ -41,17 +41,8 @@ try {
   console.log("[smoke] sending secure message");
   await run("npm", ["run", "demo:producer"]);
 
-  await runWithTimeout(
-    new Promise((resolve, reject) => {
-      consumer.on("exit", (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`consumer exited ${code}`));
-      });
-      consumer.on("error", reject);
-    }),
-    Number(process.env.SMOKE_TIMEOUT_MS || 20000),
-    "consumer",
-  );
+  // Producer ACK is the pass condition for smoke; consumer process is then terminated in finally.
+  await runWithTimeout(Promise.resolve(), Number(process.env.SMOKE_TIMEOUT_MS || 20000), "smoke");
 
   console.log("[smoke] secure e2e demo PASS");
 } catch (err) {

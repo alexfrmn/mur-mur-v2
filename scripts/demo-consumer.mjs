@@ -17,6 +17,8 @@ console.log("[consumer] secure listener starting", {
   cryptoProvider: getCryptoProvider().name,
 });
 
+let shouldExit = false;
+
 try {
   await broker.subscribeWithAck({
     subject: cfg.subject,
@@ -54,14 +56,17 @@ try {
       });
 
       if (cfg.exitAfterOne) {
-        await broker.close();
-        process.exit(0);
+        shouldExit = true;
       }
     },
   });
 
   while (true) {
-    await sleep(60_000);
+    if (shouldExit) {
+      await broker.close();
+      process.exit(0);
+    }
+    await sleep(200);
   }
 } catch (err) {
   console.error("[consumer] secure demo failed", {
