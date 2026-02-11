@@ -50,11 +50,22 @@ interface JsonDedupeState {
   seen: string[];
 }
 
+const warnedJsonPaths = new Set<string>();
+const warnIfJsonStoreMayRace = (filePath: string): void => {
+  if (process.env.MURMUR_JSON_STORE_LOCKING === "1") return;
+  if (warnedJsonPaths.has(filePath)) return;
+  warnedJsonPaths.add(filePath);
+  console.warn(
+    `[murmur/core] JSON store at ${filePath} has no inter-process locking. Use single-process mode or set MURMUR_JSON_STORE_LOCKING=1 once external locking is guaranteed.`,
+  );
+};
+
 export class JsonFileDedupeStore implements DedupeStore {
   private readonly filePath: string;
 
   constructor(filePath = ".data/dedupe.json") {
     this.filePath = filePath;
+    warnIfJsonStoreMayRace(this.filePath);
   }
 
   private async load(): Promise<Set<string>> {
@@ -116,7 +127,9 @@ interface JsonOutboxState {
 }
 
 export class JsonFileOutboxStore implements OutboxStore {
-  constructor(private readonly filePath = ".data/outbox.json") {}
+  constructor(private readonly filePath = ".data/outbox.json") {
+    warnIfJsonStoreMayRace(this.filePath);
+  }
 
   private async load(): Promise<JsonOutboxState> {
     try {
@@ -409,18 +422,21 @@ export interface SqlExecutor {
 }
 
 export class PgSqlExecutor implements SqlExecutor {
-  constructor(private readonly connectionString: string) {}
+  private readonly poolPromise: Promise<import("pg").Pool>;
+
+  constructor(private readonly connectionString: string) {
+    this.poolPromise = import("pg").then(({ Pool }) => new Pool({ connectionString: this.connectionString }));
+  }
 
   async query<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<{ rows: T[]; rowCount: number }> {
-    const { Client } = await import("pg");
-    const client = new Client({ connectionString: this.connectionString });
-    await client.connect();
-    try {
-      const res = await client.query(sql, params);
-      return { rows: res.rows as T[], rowCount: res.rowCount ?? 0 };
-    } finally {
-      await client.end();
-    }
+    const pool = await this.poolPromise;
+    const res = await pool.query(sql, params);
+    return { rows: res.rows as T[], rowCount: res.rowCount ?? 0 };
+  }
+
+  async close(): Promise<void> {
+    const pool = await this.poolPromise;
+    await pool.end();
   }
 }
 
@@ -517,13 +533,25 @@ export class SQLiteMessageStore {
 export const isEnvelopeV1 = (v: unknown): v is EnvelopeV1 => {
   if (!v || typeof v !== "object") return false;
   const o = v as Record<string, unknown>;
+  const hasOptional = (key: keyof EnvelopeV1, type: "string" | "number"): boolean => {
+    const value = o[key as string];
+    return value === undefined || typeof value === type;
+  };
+
   return (
     o.schemaVersion === "1.0" &&
-    typeof o.msgId === "string" &&
-    typeof o.conversationId === "string" &&
-    typeof o.senderAgentId === "string" &&
-    Array.isArray(o.recipients) &&
-    typeof o.payloadCiphertext === "string"
+    typeof o.msgId === "string" && o.msgId.length > 0 &&
+    typeof o.conversationId === "string" && o.conversationId.length > 0 &&
+    typeof o.senderAgentId === "string" && o.senderAgentId.length > 0 &&
+    Array.isArray(o.recipients) && o.recipients.length > 0 && o.recipients.every((r) => typeof r === "string" && r.length > 0) &&
+    typeof o.createdAt === "string" && !Number.isNaN(Date.parse(o.createdAt)) &&
+    typeof o.payloadCiphertext === "string" && o.payloadCiphertext.length > 0 &&
+    typeof o.payloadNonce === "string" && o.payloadNonce.length > 0 &&
+    typeof o.signature === "string" && o.signature.length > 0 &&
+    hasOptional("ttlSeconds", "number") &&
+    hasOptional("traceId", "string") &&
+    hasOptional("sequence", "number") &&
+    hasOptional("parentMsgId", "string")
   );
 };
 

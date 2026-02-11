@@ -4,12 +4,14 @@ Reliable, secure multi-agent messaging core for OpenClaw-style agent systems.
 
 ## What is implemented (prod-first + hardening)
 
-- ACK correlation path in broker (`startAckCorrelation`) to mark outbox rows `acked` by `msgId`.
+- ACK correlation path in broker (`startAckCorrelation`) to mark outbox rows `acked` by `msgId` and requeue `nack` responses as failed.
 - Persistent optimistic-locking store (`SQLiteDedupeOutboxStore`) for dedupe + outbox state.
+- JSON file stores now emit a startup warning when no external locking is configured (`MURMUR_JSON_STORE_LOCKING=1`), because they are single-process safe by default.
 - Delivery hardening in outbox flush:
   - exponential backoff with jitter
   - ack-timeout requeue support (`requeueStaleSent`)
   - poison-message handling threshold on consumer side
+  - broker connect retry/backoff and optional token auth in `BrokerConfig`
 - Security policy gate before publish:
   - allowed sender→recipient map
   - max payload size checks
@@ -22,7 +24,7 @@ Reliable, secure multi-agent messaging core for OpenClaw-style agent systems.
   - `MURMUR_ENABLE_MLS=1` feature flag
   - adapter placeholder that keeps build stable
 - Postgres SQL executor abstraction (`PgSqlExecutor`) for environments that need PG-backed implementations.
-- Minimal functional Telegram bridge (`@murmurv2/bridge-telegram`) for inbound/outbound with env config.
+- Minimal functional Telegram bridge (`@murmurv2/bridge-telegram`) for inbound/outbound with strict env/config validation.
 - Local persistent message store (`SQLiteMessageStore`) for conversation history/search.
 - Basic MCP server (`@murmurv2/mcp-server`) exposing:
   - `send_message`
@@ -174,7 +176,8 @@ This only enables scaffolded interfaces right now. See `docs/MLS-SCAFFOLD.md`.
 ## Tests
 
 ```bash
-npm test
+npm test                # build + unit tests
+npm run test:integration
 ```
 
 ## Secure local demo (default)

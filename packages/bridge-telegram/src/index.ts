@@ -23,6 +23,16 @@ interface TelegramUpdate {
   };
 }
 
+const validateTelegramBridgeConfig = (cfg: TelegramBridgeConfig): void => {
+  const errs: string[] = [];
+  if (!cfg.botToken || !cfg.botToken.trim()) errs.push("MURMUR_TELEGRAM_BOT_TOKEN is required");
+  if (!cfg.defaultChatId || !cfg.defaultChatId.trim()) errs.push("MURMUR_TELEGRAM_CHAT_ID is required");
+  if (!cfg.apiBase || !/^https?:\/\//.test(cfg.apiBase)) errs.push("apiBase must be an absolute http(s) URL");
+  if (!cfg.senderAgentId || !cfg.senderAgentId.trim()) errs.push("senderAgentId must be non-empty");
+  if (!cfg.recipientAgentId || !cfg.recipientAgentId.trim()) errs.push("recipientAgentId must be non-empty");
+  if (errs.length > 0) throw new Error(`invalid-telegram-bridge-config: ${errs.join("; ")}`);
+};
+
 export class TelegramBridge {
   private readonly cfg: TelegramBridgeConfig;
   private readonly store: SQLiteMessageStore;
@@ -37,6 +47,7 @@ export class TelegramBridge {
       apiBase: config?.apiBase ?? "https://api.telegram.org",
       messageStorePath: config?.messageStorePath ?? process.env.MURMUR_STORE_PATH ?? ".data/murmur.db",
     };
+    validateTelegramBridgeConfig(this.cfg);
     this.store = new SQLiteMessageStore(this.cfg.messageStorePath);
   }
 

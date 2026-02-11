@@ -15,6 +15,10 @@ import {
 export interface BrokerConfig {
   url: string;
   stream?: string;
+  token?: string;
+  connectMaxAttempts?: number;
+  connectBaseBackoffMs?: number;
+  connectJitterRatio?: number;
 }
 
 export type MessageHandler = (envelope: EnvelopeV1) => Promise<void>;
@@ -28,7 +32,28 @@ export class NatsBroker {
 
   async connect(): Promise<void> {
     if (this.nc) return;
-    this.nc = await connect({ servers: this.config.url });
+
+    const maxAttempts = this.config.connectMaxAttempts ?? 5;
+    const baseBackoffMs = this.config.connectBaseBackoffMs ?? 250;
+    const jitterRatio = this.config.connectJitterRatio ?? 0.2;
+    let lastErr: unknown;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        this.nc = await connect({
+          servers: this.config.url,
+          token: this.config.token,
+        });
+        return;
+      } catch (err) {
+        lastErr = err;
+        if (attempt >= maxAttempts) break;
+        const sleepMs = applyJitter(computeBackoffMs(attempt, baseBackoffMs), jitterRatio);
+        await new Promise((resolve) => setTimeout(resolve, sleepMs));
+      }
+    }
+
+    throw lastErr instanceof Error ? lastErr : new Error("nats-connect-failed");
   }
 
   async close(): Promise<void> {
@@ -115,8 +140,19 @@ export class NatsBroker {
       for await (const m of sub) {
         try {
           const decoded = JSON.parse(this.sc.decode(m.data)) as AckV1;
-          if (decoded.status === "ack" && typeof decoded.msgId === "string") {
+          if (typeof decoded.msgId !== "string" || decoded.msgId.length === 0) continue;
+
+          if (decoded.status === "ack") {
             await params.outbox.markAcked(decoded.msgId);
+            continue;
+          }
+
+          if (decoded.status === "nack") {
+            await params.outbox.markFailed(
+              decoded.msgId,
+              decoded.reason ?? "nack",
+              new Date().toISOString(),
+            );
           }
         } catch {
           // ignore malformed ack frames
