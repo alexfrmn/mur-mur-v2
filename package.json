@@ -1,0 +1,17 @@
+{
+  "name": "mur-mur-v2",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Reliable secure multi-agent messaging core",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty",
+    "clean": "rm -rf packages/*/dist"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
