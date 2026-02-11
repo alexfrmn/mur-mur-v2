@@ -1,16 +1,6 @@
 #!/usr/bin/env node
 /**
  * murmur-daemon.mjs — Persistent agent-to-agent messaging daemon.
- *
- * - Loads agent config from .data/agent-config.json
- * - Connects to NATS, subscribes for incoming messages
- * - Verifies signature + decrypts payload → stores inbound in SQLite
- * - Flushes outbox every 2s (messages enqueued by MCP server)
- * - ACK correlation for reliable delivery
- * - Graceful shutdown on SIGTERM/SIGINT
- *
- * Usage: node scripts/murmur-daemon.mjs
- * Env: DATA_DIR (default: .data), FLUSH_INTERVAL_MS (default: 2000)
  */
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
@@ -18,18 +8,14 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { NatsBroker } from "@murmurv2/broker-nats";
 import { SQLiteDedupeOutboxStore, SQLiteMessageStore } from "@murmurv2/core";
-import {
-  decryptPayload,
-  verifyEnvelopeSignature,
-} from "@murmurv2/security";
+import { decryptPayload, verifyEnvelopeSignature } from "@murmurv2/security";
+import { NotifyQueue, flushNotifyQueue, normalizeNotifyTargets } from "./notify-router.mjs";
 
-// --- Structured logging for journald ---
 const log = (level, msg, data) => {
   const entry = { ts: new Date().toISOString(), level, msg, ...data };
   console.log(JSON.stringify(entry));
 };
 
-// --- Load agent config ---
 const dataDir = process.env.DATA_DIR || ".data";
 const configPath = path.join(dataDir, "agent-config.json");
 
@@ -45,47 +31,43 @@ try {
 const { agentId, natsUrl, natsToken, subject, peers, keys } = config;
 const dbPath = path.join(dataDir, "murmur.db");
 const flushIntervalMs = Number(process.env.FLUSH_INTERVAL_MS) || 2000;
+const notifyTargets = normalizeNotifyTargets(config.notify);
+const notifyQueue = new NotifyQueue(dbPath);
 
-log("info", "Daemon starting", { agentId, subject, natsUrl, dbPath, flushIntervalMs });
+log("info", "Daemon starting", {
+  agentId,
+  subject,
+  natsUrl,
+  dbPath,
+  flushIntervalMs,
+  notifyTargets: notifyTargets.map((t) => `${t.type}:${t.channel}`),
+});
 
-// --- Stores (shared SQLite with MCP server) ---
 const store = new SQLiteDedupeOutboxStore(dbPath);
 const msgStore = new SQLiteMessageStore(dbPath);
-
-// --- NATS broker ---
 const broker = new NatsBroker({ url: natsUrl, token: natsToken });
 
-// --- Stable envelope payload for signature verification ---
-const stableEnvelopePayload = (envelope) => {
-  return JSON.stringify({
-    schemaVersion: envelope.schemaVersion,
-    msgId: envelope.msgId,
-    conversationId: envelope.conversationId,
-    senderAgentId: envelope.senderAgentId,
-    recipients: [...envelope.recipients],
-    createdAt: envelope.createdAt,
-    payloadCiphertext: envelope.payloadCiphertext,
-    payloadNonce: envelope.payloadNonce,
-  });
-};
+const stableEnvelopePayload = (envelope) => JSON.stringify({
+  schemaVersion: envelope.schemaVersion,
+  msgId: envelope.msgId,
+  conversationId: envelope.conversationId,
+  senderAgentId: envelope.senderAgentId,
+  recipients: [...envelope.recipients],
+  createdAt: envelope.createdAt,
+  payloadCiphertext: envelope.payloadCiphertext,
+  payloadNonce: envelope.payloadNonce,
+});
 
-// --- Incoming message handler ---
 const onMessage = async (envelope) => {
   const senderId = envelope.senderAgentId;
   const peer = peers[senderId];
 
-  if (!peer) {
-    throw new Error(`unknown-sender:${senderId}`);
-  }
+  if (!peer) throw new Error(`unknown-sender:${senderId}`);
 
-  // Verify signature
   const sigPayload = stableEnvelopePayload(envelope);
   const valid = await verifyEnvelopeSignature(sigPayload, envelope.signature, peer.signing.publicKey);
-  if (!valid) {
-    throw new Error(`signature-invalid:${senderId}`);
-  }
+  if (!valid) throw new Error(`signature-invalid:${senderId}`);
 
-  // Decrypt payload
   const plaintext = await decryptPayload(
     {
       ciphertext: envelope.payloadCiphertext,
@@ -95,7 +77,6 @@ const onMessage = async (envelope) => {
     keys.encryption.privateKey,
   );
 
-  // Store inbound message
   await msgStore.append({
     conversationId: envelope.conversationId,
     msgId: envelope.msgId,
@@ -113,7 +94,21 @@ const onMessage = async (envelope) => {
     textLen: plaintext.length,
   });
 
-  // --- onReceive hook: notify external system ---
+  if (notifyTargets.length > 0) {
+    const payload = {
+      from: senderId,
+      text: plaintext,
+      msgId: envelope.msgId,
+      conversationId: envelope.conversationId,
+      ts: new Date().toISOString(),
+    };
+    notifyQueue.enqueueMessage(payload, notifyTargets);
+    log("info", "Notifications queued", {
+      msgId: envelope.msgId,
+      targetCount: notifyTargets.length,
+    });
+  }
+
   if (config.onReceive) {
     try {
       const env = {
@@ -132,25 +127,26 @@ const onMessage = async (envelope) => {
   }
 };
 
-// --- Outbox flush loop ---
 let running = true;
 
 const flushLoop = async () => {
   while (running) {
     try {
-      await broker.flushOutbox({
-        outbox: store,
-        maxAttempts: 5,
-        ackTimeoutMs: 15_000,
-      });
+      await broker.flushOutbox({ outbox: store, maxAttempts: 5, ackTimeoutMs: 15_000 });
     } catch (err) {
       log("error", "Outbox flush error", { error: err.message });
     }
+
+    try {
+      await flushNotifyQueue({ queue: notifyQueue, log, limit: 100 });
+    } catch (err) {
+      log("error", "Notify flush error", { error: err.message });
+    }
+
     await sleep(flushIntervalMs);
   }
 };
 
-// --- Graceful shutdown ---
 const shutdown = async (signal) => {
   log("info", "Shutdown signal received", { signal });
   running = false;
@@ -166,30 +162,23 @@ const shutdown = async (signal) => {
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
-// --- Main startup ---
 try {
   await broker.connect();
   log("info", "NATS connected", { url: natsUrl });
 
-  // Subscribe for incoming messages
-  await broker.subscribeWithAck({
-    subject,
-    consumerId: agentId,
-    dedupe: store,
-    onMessage,
-  });
+  await broker.subscribeWithAck({ subject, consumerId: agentId, dedupe: store, onMessage });
   log("info", "Subscribed", { subject });
 
-  // Start ACK correlation for outbound messages
-  await broker.startAckCorrelation({
-    outbox: store,
-    ackSubject: `ack.${agentId}`,
-  });
+  await broker.startAckCorrelation({ outbox: store, ackSubject: `ack.${agentId}` });
   log("info", "ACK correlation started", { ackSubject: `ack.${agentId}` });
 
-  // Start outbox flush loop
-  flushLoop();
+  const pendingNotify = notifyQueue.pendingCount();
+  if (pendingNotify > 0) {
+    log("info", "Resuming pending notifications", { pendingNotify });
+    await flushNotifyQueue({ queue: notifyQueue, log, limit: 250 });
+  }
 
+  flushLoop();
   log("info", "Daemon ready", { agentId, peers: Object.keys(peers) });
 } catch (err) {
   log("fatal", "Daemon startup failed", { error: err.message });

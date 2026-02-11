@@ -146,13 +146,25 @@ AGENT_ID=friend-agent node scripts/murmur-join.mjs 'MURMUR:eyJ...'
 node scripts/murmur-add-peer.mjs 'MURMUR-REPLY:eyJ...'
 ```
 
-**Done! Both start daemons:**
+**Done! Configure notifications + start daemon:**
 ```bash
+# Telegram preset (from env)
+export MURMUR_TELEGRAM_BOT_TOKEN="..."
+export MURMUR_TELEGRAM_CHAT_ID="..."
+node scripts/murmur-notify-init.mjs telegram
+
+# Optional presets
+# node scripts/murmur-notify-init.mjs discord   # uses MURMUR_DISCORD_WEBHOOK_URL
+# node scripts/murmur-notify-init.mjs whatsapp  # uses MURMUR_WHATSAPP_WEBHOOK_URL (bridge placeholder)
+
 node scripts/murmur-daemon.mjs
 # Or production (systemd):
 sudo cp deploy/murmur-daemon.service /etc/systemd/system/
 sudo systemctl enable --now murmur-daemon
+sudo systemctl restart murmur-daemon
 ```
+
+Then test from peer with `murmur_send`; inbound messages are stored durably and queued notifications auto-resume after daemon restarts.
 
 Agents communicate via MCP tools: `murmur_send` / `murmur_inbox` / `murmur_peers`.
 
@@ -258,11 +270,32 @@ This only enables scaffolded interfaces right now. See `docs/MLS-SCAFFOLD.md`.
 - requeue stale `sent` using `ackTimeoutMs`
 - alert on `dlq` growth and poison-message nacks
 
+## Notification routing
+
+`murmur-daemon` supports unified notify adapters with retries + idempotent queueing:
+
+```json
+{
+  "notify": {
+    "telegram": { "botToken": "...", "chatId": "...", "topicId": "..." },
+    "webhook": [
+      { "channel": "discord", "url": "https://discord.com/api/webhooks/..." },
+      { "channel": "whatsapp", "url": "https://your-bridge.example/hook" }
+    ]
+  }
+}
+```
+
+Backward-compatible shapes are also accepted:
+- `notify: { botToken, chatId, topicId }`
+- `notify: { url, headers }`
+
 ## Tests
 
 ```bash
-npm test                # build + unit tests
+npm test                # build + unit tests + notify smoke
 npm run test:integration
+npm run test:notify-smoke
 ```
 
 ## Secure local demo (default)

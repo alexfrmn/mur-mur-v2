@@ -18,7 +18,8 @@
     "mcp:server": "node packages/mcp-server/dist/index.js",
     "test:unit": "node --test tests/*.test.mjs",
     "test:integration": "node scripts/run-integration.mjs",
-    "test": "npm run build && npm run test:unit"
+    "test:notify-smoke": "node scripts/notify-smoke.mjs",
+    "test": "npm run build && npm run test:unit && npm run test:notify-smoke"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
