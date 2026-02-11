@@ -12,9 +12,10 @@
     "types": ["node"],
     "baseUrl": ".",
     "paths": {
-      "@murmurv2/core": ["../core/src/index.ts"]
+      "@murmurv2/core": ["../core/src/index.ts"],
+      "@murmurv2/security": ["../security/src/index.ts"]
     }
   },
   "include": ["src"],
-  "references": [{ "path": "../core" }]
+  "references": [{ "path": "../core" }, { "path": "../security" }]
 }
