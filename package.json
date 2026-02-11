@@ -14,7 +14,8 @@
     "demo:down": "docker compose -f deploy/docker-compose.messaging.yml down",
     "demo:consumer": "node scripts/demo-consumer.mjs",
     "demo:producer": "node scripts/demo-producer.mjs",
-    "mcp:server": "node packages/mcp-server/dist/index.js"
+    "mcp:server": "node packages/mcp-server/dist/index.js",
+    "test": "npm run build && node --test tests/*.test.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
@@ -22,6 +23,8 @@
     "typescript": "^5.6.3"
   },
   "dependencies": {
+    "@noble/ciphers": "^1.3.0",
+    "@noble/curves": "^1.9.7",
     "nats": "^2.28.2",
     "pg": "^8.16.3"
   }
