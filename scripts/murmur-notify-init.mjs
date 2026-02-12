@@ -56,8 +56,27 @@ const run = async () => {
     if (url.includes("example.invalid")) {
       console.log("[notify-init] TODO: set MURMUR_WHATSAPP_WEBHOOK_URL to your bridge endpoint");
     }
+  } else if (preset === "openclaw") {
+    const sessionId = process.env.MURMUR_OPENCLAW_SESSION_ID || "";
+    const to = process.env.MURMUR_OPENCLAW_TO || "";
+    const routeChannel = process.env.MURMUR_OPENCLAW_CHANNEL || "telegram";
+    const helperScript = process.env.MURMUR_OPENCLAW_HELPER_SCRIPT || "scripts/on-receive-openclaw.mjs";
+    const command = process.env.MURMUR_OPENCLAW_COMMAND || "";
+    if (!sessionId && !to && !command) {
+      console.error("[notify-init] openclaw requires MURMUR_OPENCLAW_SESSION_ID or MURMUR_OPENCLAW_TO (or MURMUR_OPENCLAW_COMMAND)");
+      process.exit(1);
+    }
+    cfg.notify.openclaw = {
+      enabled: true,
+      channel: "openclaw-main",
+      routeChannel,
+      ...(sessionId ? { sessionId } : {}),
+      ...(to ? { to } : {}),
+      ...(command ? { command } : { helperScript }),
+    };
+    console.log("[notify-init] Configured openclaw bridge");
   } else {
-    console.error(`[notify-init] Unknown preset '${preset}'. Use: telegram | discord | whatsapp`);
+    console.error(`[notify-init] Unknown preset '${preset}'. Use: telegram | discord | whatsapp | openclaw`);
     process.exit(1);
   }
 

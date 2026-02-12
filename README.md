@@ -26,6 +26,7 @@ Reliable, secure multi-agent messaging core for OpenClaw-style agent systems.
 - Postgres SQL executor abstraction (`PgSqlExecutor`) for environments that need PG-backed implementations.
 - Minimal functional Telegram bridge (`@murmurv2/bridge-telegram`) for inbound/outbound with strict env/config validation.
 - Local persistent message store (`SQLiteMessageStore`) for conversation history/search.
+- OpenClaw bridge queue with persisted idempotency (`openclaw_bridge_queue`) so inbound Mur-Mur messages can be auto-injected into a CODEX/OpenClaw session.
 - Basic MCP server (`@murmurv2/mcp-server`) exposing:
   - `send_message`
   - `list_conversations`
@@ -157,6 +158,11 @@ node scripts/murmur-notify-init.mjs telegram
 # node scripts/murmur-notify-init.mjs discord   # uses MURMUR_DISCORD_WEBHOOK_URL
 # node scripts/murmur-notify-init.mjs whatsapp  # uses MURMUR_WHATSAPP_WEBHOOK_URL (bridge placeholder)
 
+# OpenClaw auto-bridge preset (injects inbound Mur-Mur into an OpenClaw session)
+export MURMUR_OPENCLAW_SESSION_ID="<existing-openclaw-session-id>"  # or set MURMUR_OPENCLAW_TO
+node scripts/murmur-openclaw-init.mjs
+# (or: node scripts/murmur-notify-init.mjs openclaw)
+
 node scripts/murmur-daemon.mjs
 # Or production (systemd):
 sudo cp deploy/murmur-daemon.service /etc/systemd/system/
@@ -281,7 +287,14 @@ This only enables scaffolded interfaces right now. See `docs/MLS-SCAFFOLD.md`.
     "webhook": [
       { "channel": "discord", "url": "https://discord.com/api/webhooks/..." },
       { "channel": "whatsapp", "url": "https://your-bridge.example/hook" }
-    ]
+    ],
+    "openclaw": {
+      "enabled": true,
+      "channel": "openclaw-main",
+      "routeChannel": "telegram",
+      "sessionId": "<openclaw-session-id>",
+      "helperScript": "scripts/on-receive-openclaw.mjs"
+    }
   }
 }
 ```
@@ -296,6 +309,7 @@ Backward-compatible shapes are also accepted:
 npm test                # build + unit tests + notify smoke
 npm run test:integration
 npm run test:notify-smoke
+npm run test:openclaw-bridge-smoke
 ```
 
 ## Secure local demo (default)

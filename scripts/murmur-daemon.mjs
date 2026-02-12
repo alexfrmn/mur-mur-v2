@@ -10,6 +10,7 @@ import { NatsBroker } from "@murmurv2/broker-nats";
 import { SQLiteDedupeOutboxStore, SQLiteMessageStore } from "@murmurv2/core";
 import { decryptPayload, verifyEnvelopeSignature } from "@murmurv2/security";
 import { NotifyQueue, flushNotifyQueue, normalizeNotifyTargets } from "./notify-router.mjs";
+import { OpenClawBridgeQueue, flushOpenClawBridgeQueue, normalizeOpenClawTargets } from "./openclaw-bridge.mjs";
 
 const log = (level, msg, data) => {
   const entry = { ts: new Date().toISOString(), level, msg, ...data };
@@ -32,7 +33,9 @@ const { agentId, natsUrl, natsToken, subject, peers, keys } = config;
 const dbPath = path.join(dataDir, "murmur.db");
 const flushIntervalMs = Number(process.env.FLUSH_INTERVAL_MS) || 2000;
 const notifyTargets = normalizeNotifyTargets(config.notify);
+const openclawTargets = normalizeOpenClawTargets(config.notify);
 const notifyQueue = new NotifyQueue(dbPath);
+const openclawQueue = new OpenClawBridgeQueue(dbPath);
 
 log("info", "Daemon starting", {
   agentId,
@@ -41,6 +44,7 @@ log("info", "Daemon starting", {
   dbPath,
   flushIntervalMs,
   notifyTargets: notifyTargets.map((t) => `${t.type}:${t.channel}`),
+  openclawTargets: openclawTargets.map((t) => `openclaw:${t.channel}`),
 });
 
 const store = new SQLiteDedupeOutboxStore(dbPath);
@@ -94,14 +98,24 @@ const onMessage = async (envelope) => {
     textLen: plaintext.length,
   });
 
-  if (notifyTargets.length > 0) {
-    const payload = {
-      from: senderId,
-      text: plaintext,
+  const payload = {
+    from: senderId,
+    text: plaintext,
+    msgId: envelope.msgId,
+    conversationId: envelope.conversationId,
+    ts: new Date().toISOString(),
+  };
+
+  if (openclawTargets.length > 0) {
+    openclawQueue.enqueueMessage(payload, openclawTargets);
+    log("info", "OpenClaw bridge queued", {
       msgId: envelope.msgId,
-      conversationId: envelope.conversationId,
-      ts: new Date().toISOString(),
-    };
+      targetCount: openclawTargets.length,
+    });
+    await flushOpenClawBridgeQueue({ queue: openclawQueue, log, limit: 20 });
+  }
+
+  if (notifyTargets.length > 0) {
     notifyQueue.enqueueMessage(payload, notifyTargets);
     log("info", "Notifications queued", {
       msgId: envelope.msgId,
@@ -138,6 +152,12 @@ const flushLoop = async () => {
     }
 
     try {
+      await flushOpenClawBridgeQueue({ queue: openclawQueue, log, limit: 100 });
+    } catch (err) {
+      log("error", "OpenClaw bridge flush error", { error: err.message });
+    }
+
+    try {
       await flushNotifyQueue({ queue: notifyQueue, log, limit: 100 });
     } catch (err) {
       log("error", "Notify flush error", { error: err.message });
@@ -171,6 +191,12 @@ try {
 
   await broker.startAckCorrelation({ outbox: store, ackSubject: `ack.${agentId}` });
   log("info", "ACK correlation started", { ackSubject: `ack.${agentId}` });
+
+  const pendingBridge = openclawQueue.pendingCount();
+  if (pendingBridge > 0) {
+    log("info", "Resuming pending OpenClaw bridge dispatches", { pendingBridge });
+    await flushOpenClawBridgeQueue({ queue: openclawQueue, log, limit: 250 });
+  }
 
   const pendingNotify = notifyQueue.pendingCount();
   if (pendingNotify > 0) {
