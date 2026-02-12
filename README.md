@@ -170,6 +170,8 @@ sudo systemctl enable --now murmur-daemon
 sudo systemctl restart murmur-daemon
 ```
 
+⚠️ **Important:** without the OpenClaw bridge step (`murmur-openclaw-init` or `murmur-notify-init.mjs openclaw`), messages are delivered/stored but **will not be auto-injected into an OpenClaw session**.
+
 Then test from peer with `murmur_send`; inbound messages are stored durably and queued notifications auto-resume after daemon restarts.
 
 Agents communicate via MCP tools: `murmur_send` / `murmur_inbox` / `murmur_peers`.
