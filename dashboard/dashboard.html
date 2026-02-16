@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Murmur V2 — Agent Mesh Observatory</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { 
+    background: #0a0e17; color: #c9d1d9; 
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace; 
+    font-size: 13px; height: 100vh; display: flex; flex-direction: column;
+  }
+  header {
+    background: #161b22; border-bottom: 1px solid #30363d;
+    padding: 12px 20px; display: flex; align-items: center; gap: 20px;
+  }
+  header h1 { font-size: 16px; color: #58a6ff; font-weight: 600; }
+  .status-badge { 
+    padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;
+  }
+  .status-connected { background: #0d1117; border: 1px solid #238636; color: #3fb950; }
+  .status-disconnected { background: #0d1117; border: 1px solid #da3633; color: #f85149; }
+  .stats { display: flex; gap: 15px; margin-left: auto; color: #8b949e; font-size: 12px; }
+  .stats span { color: #58a6ff; }
+  
+  .container { display: flex; flex: 1; overflow: hidden; }
+  
+  .sidebar {
+    width: 240px; background: #0d1117; border-right: 1px solid #30363d;
+    padding: 15px; overflow-y: auto;
+  }
+  .sidebar h3 { color: #8b949e; font-size: 11px; text-transform: uppercase; margin-bottom: 10px; letter-spacing: 1px; }
+  .agent-item {
+    padding: 8px 10px; margin-bottom: 4px; border-radius: 6px;
+    display: flex; align-items: center; gap: 8px;
+    background: #161b22; border: 1px solid #21262d;
+  }
+  .agent-item.self { border-color: #238636; }
+  .agent-item.active { background: #1f2937; border-color: #58a6ff; }
+  .agent-item:hover { background: #1c2128; }
+  .agent-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .agent-dot.online { background: #3fb950; box-shadow: 0 0 6px #3fb950; }
+  .agent-dot.offline { background: #484f58; }
+  .agent-name { flex: 1; font-size: 12px; }
+  .agent-name.self { color: #3fb950; }
+  
+  .feed {
+    flex: 1; display: flex; flex-direction: column; overflow: hidden;
+  }
+  .feed-header {
+    padding: 10px 20px; background: #161b22; border-bottom: 1px solid #30363d;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .feed-header h2 { font-size: 13px; color: #8b949e; }
+  .pulse { width: 8px; height: 8px; border-radius: 50%; background: #f0883e; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+  
+  .messages {
+    flex: 1; overflow-y: auto; padding: 10px 20px;
+    display: flex; flex-direction: column-reverse;
+  }
+  .msg {
+    padding: 10px 14px; margin-bottom: 6px; border-radius: 6px;
+    border-left: 3px solid #30363d; background: #0d1117;
+    animation: fadeIn 0.3s ease;
+  }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; } }
+  .msg.inbound { border-left-color: #3fb950; }
+  .msg.outbound { border-left-color: #58a6ff; }
+  .msg.error { border-left-color: #f85149; }
+  .msg.historical { opacity: 0.6; }
+  .msg-header { display: flex; gap: 10px; align-items: center; margin-bottom: 4px; }
+  .msg-route { font-size: 12px; font-weight: 600; }
+  .msg-route .from { color: #f0883e; }
+  .msg-route .to { color: #58a6ff; }
+  .msg-route .arrow { color: #484f58; }
+  .msg-time { color: #484f58; font-size: 11px; margin-left: auto; }
+  .msg-crypto { font-size: 11px; }
+  .msg-text { color: #c9d1d9; line-height: 1.5; word-break: break-word; white-space: pre-wrap; }
+  .msg-text.truncated::after { content: '...'; color: #484f58; }
+  
+  .empty-state { 
+    text-align: center; padding: 60px 20px; color: #484f58; 
+  }
+  .empty-state .icon { font-size: 48px; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔮 Murmur V2 — Agent Mesh Observatory</h1>
+  <div id="connStatus" class="status-badge status-disconnected">● Disconnected</div>
+  <div class="stats">
+    Messages: <span id="statMsgs">0</span> &nbsp;|&nbsp;
+    Agents: <span id="statAgents">0</span> &nbsp;|&nbsp;
+    Uptime: <span id="statUptime">0s</span>
+  </div>
+</header>
+<div class="container">
+  <div class="sidebar">
+    <h3>🤖 Agents in Mesh</h3>
+    <div id="agentList"></div>
+  </div>
+  <div class="feed">
+    <div class="feed-header">
+      <div class="pulse"></div>
+      <h2>Live Agent Event Stream</h2>
+    </div>
+    <div class="messages" id="messages">
+      <div class="empty-state">
+        <div class="icon">📡</div>
+        <p>Waiting for agent activity...</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const msgContainer = document.getElementById('messages');
+const agentList = document.getElementById('agentList');
+const connStatus = document.getElementById('connStatus');
+const statMsgs = document.getElementById('statMsgs');
+const statAgents = document.getElementById('statAgents');
+const statUptime = document.getElementById('statUptime');
+
+let ws;
+let msgCount = 0;
+let agents = [];
+let selfAgent = '';
+let seenAgents = new Set();
+let reconnectDelay = 1000;
+let filterAgent = null;
+
+function connect() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const wsUrl = `${proto}//${location.host}${location.pathname.replace(/\/[^/]*$/, '')}/ws`;
+  ws = new WebSocket(wsUrl);
+  
+  ws.onopen = () => {
+    connStatus.className = 'status-badge status-connected';
+    connStatus.textContent = '● Connected';
+    reconnectDelay = 1000;
+  };
+  
+  ws.onclose = () => {
+    connStatus.className = 'status-badge status-disconnected';
+    connStatus.textContent = '● Disconnected';
+    setTimeout(connect, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+  };
+  
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    
+    if (data.type === 'init') {
+      selfAgent = data.self;
+      agents = data.agents;
+      renderAgents();
+      return;
+    }
+    
+    if (data.type === 'stats') {
+      statMsgs.textContent = data.totalMessages;
+      statAgents.textContent = data.agents?.length || 0;
+      const secs = Math.floor(data.uptimeMs / 1000);
+      const mins = Math.floor(secs / 60);
+      const hrs = Math.floor(mins / 60);
+      statUptime.textContent = hrs > 0 ? `${hrs}h ${mins%60}m` : `${mins}m ${secs%60}s`;
+      return;
+    }
+    
+    if (data.type === 'message' || data.type === 'error') {
+      addMessage(data);
+    }
+  };
+}
+
+function renderAgents() {
+  agentList.innerHTML = agents.map(a => {
+    const isSelf = a === selfAgent;
+    const isOnline = seenAgents.has(a) || isSelf;
+    const active = filterAgent === a ? 'active' : '';
+    return `<div class="agent-item ${isSelf ? 'self' : ''} ${active}" onclick="toggleFilter('${a}')" style="cursor:pointer">
+      <div class="agent-dot ${isOnline ? 'online' : 'offline'}"></div>
+      <div class="agent-name ${isSelf ? 'self' : ''}">${a}${isSelf ? ' (me)' : ''}</div>
+    </div>`;
+  }).join('');
+}
+
+function toggleFilter(agent) {
+  filterAgent = filterAgent === agent ? null : agent;
+  renderAgents();
+  // Show/hide messages based on filter
+  document.querySelectorAll('#messages .msg').forEach(el => {
+    if (!filterAgent) {
+      el.style.display = '';
+    } else {
+      const route = el.querySelector('.msg-route')?.textContent || '';
+      el.style.display = route.includes(filterAgent) ? '' : 'none';
+    }
+  });
+}
+
+function addMessage(data) {
+  // Remove empty state
+  const empty = msgContainer.querySelector('.empty-state');
+  if (empty) empty.remove();
+  
+  msgCount++;
+  if (data.from) seenAgents.add(data.from);
+  renderAgents();
+  
+  const dir = data.direction || (data.to === selfAgent ? 'inbound' : 'outbound');
+  const cls = data.type === 'error' ? 'error' : dir;
+  const hist = data.historical ? 'historical' : '';
+  
+  const crypto = data.encrypted 
+    ? (data.decrypted ? '🔐✅' : '🔐❌') 
+    : '📨';
+  
+  const time = data.ts ? new Date(data.ts).toLocaleTimeString() : '';
+  const text = (data.text || '').slice(0, 500);
+  
+  const el = document.createElement('div');
+  el.className = `msg ${cls} ${hist}`;
+  el.innerHTML = `
+    <div class="msg-header">
+      <div class="msg-route">
+        <span class="from">${data.from || '?'}</span>
+        <span class="arrow"> → </span>
+        <span class="to">${data.to || '?'}</span>
+      </div>
+      <span class="msg-crypto">${crypto}</span>
+      <span class="msg-time">${time}</span>
+    </div>
+    <div class="msg-text">${escHtml(text)}</div>
+  `;
+  
+  // Apply filter
+  if (filterAgent && !`${data.from} ${data.to}`.includes(filterAgent)) {
+    el.style.display = 'none';
+  }
+  msgContainer.prepend(el);
+  
+  // Keep max 200 messages
+  while (msgContainer.children.length > 200) {
+    msgContainer.lastChild.remove();
+  }
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+connect();
+</script>
+</body>
+</html>

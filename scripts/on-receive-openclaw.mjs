@@ -1,46 +1,77 @@
 #!/usr/bin/env node
 /**
- * Default local helper for Mur-Mur -> OpenClaw bridge.
- * Reads MURMUR_* env vars and sends the inbound payload into an OpenClaw session.
+ * Mur-Mur -> OpenClaw bridge helper.
+ * Injects inbound Murmur messages into the MAIN OpenClaw session
+ * via Gateway /tools/invoke API (cron wake).
  */
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import http from "node:http";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const execFileAsync = promisify(execFile);
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const text = process.env.MURMUR_TEXT || "";
 const from = process.env.MURMUR_FROM || "unknown";
 const msgId = process.env.MURMUR_MSG_ID || "unknown";
-const conversationId = process.env.MURMUR_CONVERSATION_ID || "unknown";
 
-const routeChannel = process.env.MURMUR_OPENCLAW_CHANNEL || "telegram";
-const sessionId = process.env.MURMUR_OPENCLAW_SESSION_ID || "";
-const to = process.env.MURMUR_OPENCLAW_TO || "";
-const agent = process.env.MURMUR_OPENCLAW_AGENT || "";
+// Load gateway token from env or agent-config.json fallback
+let gatewayToken = process.env.MURMUR_OPENCLAW_GATEWAY_TOKEN || "";
+if (!gatewayToken) {
+  try {
+    const cfg = JSON.parse(readFileSync(join(__dirname, "..", ".data", "agent-config.json"), "utf8"));
+    gatewayToken = cfg.gatewayToken || "";
+  } catch {}
+}
+const gatewayUrl = process.env.MURMUR_OPENCLAW_GATEWAY_URL || "http://127.0.0.1:18789";
 
-const message = [
-  "[MURMUR_INBOUND]",
-  `from: ${from}`,
-  `conversationId: ${conversationId}`,
-  `msgId: ${msgId}`,
-  "",
-  text,
-].join("\n");
-
-if (!sessionId && !to) {
-  console.error("[openclaw-helper] Missing target: set MURMUR_OPENCLAW_SESSION_ID or MURMUR_OPENCLAW_TO");
-  process.exit(2);
+if (!text) {
+  console.log("[openclaw-helper] No text, skipping");
+  process.exit(0);
 }
 
-const args = ["agent", "--channel", routeChannel, "--message", message, "--json"];
-if (agent) args.push("--agent", agent);
-if (sessionId) args.push("--session-id", sessionId);
-else args.push("--to", to);
+const wakeText = `[MURMUR_INBOUND] from: ${from} | msgId: ${msgId}\n\n${text}`;
 
-try {
-  const { stdout } = await execFileAsync("openclaw", args, { timeout: 30_000, env: process.env });
-  process.stdout.write((stdout || "").trim() + "\n");
-} catch (err) {
-  console.error("[openclaw-helper] dispatch failed:", err instanceof Error ? err.message : String(err));
+const body = JSON.stringify({
+  tool: "cron",
+  args: {
+    action: "wake",
+    text: wakeText,
+    mode: "now",
+  },
+});
+
+const url = new URL("/tools/invoke", gatewayUrl);
+
+const req = http.request(url, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    ...(gatewayToken ? { "Authorization": `Bearer ${gatewayToken}` } : {}),
+  },
+}, (res) => {
+  let data = "";
+  res.on("data", (chunk) => data += chunk);
+  res.on("end", () => {
+    if (res.statusCode < 300) {
+      console.log(`[openclaw-helper] OK: ${data.slice(0, 100)}`);
+    } else {
+      console.error(`[openclaw-helper] HTTP ${res.statusCode}: ${data.slice(0, 200)}`);
+      process.exit(1);
+    }
+  });
+});
+
+req.on("error", (err) => {
+  console.error(`[openclaw-helper] Request failed: ${err.message}`);
   process.exit(1);
-}
+});
+
+req.setTimeout(15000, () => {
+  req.destroy();
+  console.error("[openclaw-helper] Timeout 15s");
+  process.exit(1);
+});
+
+req.write(body);
+req.end();

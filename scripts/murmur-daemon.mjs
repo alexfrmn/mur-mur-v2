@@ -189,6 +189,36 @@ try {
   await broker.subscribeWithAck({ subject, consumerId: agentId, dedupe: store, onMessage });
   log("info", "Subscribed", { subject });
 
+  // Also subscribe to proxy subjects (agents without their own daemon)
+  const proxySubjects = (config.proxySubjects || []);
+  for (const ps of proxySubjects) {
+    const proxyOnMessage = async (envelope, plaintext) => {
+      const senderId = envelope.senderAgentId || "unknown";
+      log("info", "Proxy message received", { subject: ps, from: senderId, len: plaintext?.length });
+      // Run LLM handler for proxy agents
+      if (config.proxyOnReceive) {
+        try {
+          const env = {
+            ...process.env,
+            MURMUR_FROM: senderId,
+            MURMUR_TEXT: plaintext,
+            MURMUR_MSG_ID: envelope.msgId,
+            MURMUR_CONVERSATION_ID: envelope.conversationId,
+            MURMUR_PROXY_AGENT: ps.replace("msg.", ""),
+          };
+          execFile("sh", ["-c", config.proxyOnReceive], { env, timeout: 60_000 }, (err, stdout, stderr) => {
+            if (err) log("warn", "proxyOnReceive hook failed", { error: err.message, stderr: stderr?.slice(0,200) });
+            else log("info", "proxyOnReceive hook completed", { stdout: stdout?.slice(0,100) });
+          });
+        } catch (err) {
+          log("warn", "proxyOnReceive hook error", { error: err.message });
+        }
+      }
+    };
+    await broker.subscribeWithAck({ subject: ps, consumerId: `${agentId}-proxy`, dedupe: store, onMessage: proxyOnMessage });
+    log("info", "Subscribed (proxy)", { subject: ps });
+  }
+
   await broker.startAckCorrelation({ outbox: store, ackSubject: `ack.${agentId}` });
   log("info", "ACK correlation started", { ackSubject: `ack.${agentId}` });
 
