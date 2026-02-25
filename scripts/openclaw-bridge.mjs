@@ -182,7 +182,32 @@ export const dispatchOpenClawBridge = async (target, payload) => {
   return dispatchViaOpenClawCli(target, payload);
 };
 
-export const flushOpenClawBridgeQueue = async ({ queue, log, limit = 20 }) => {
+/**
+ * Extract response text from OpenClaw CLI JSON stdout.
+ * Handles both single-payload and multi-payload responses.
+ */
+const extractResponseText = (stdout) => {
+  if (!stdout) return null;
+  try {
+    const data = JSON.parse(stdout);
+    if (data.status !== "ok") return null;
+    const payloads = data.result?.payloads;
+    if (!Array.isArray(payloads) || payloads.length === 0) return null;
+    return payloads.map((p) => p.text).filter(Boolean).join("\n\n");
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * @param {object} opts
+ * @param {OpenClawBridgeQueue} opts.queue
+ * @param {Function} opts.log
+ * @param {number} [opts.limit=20]
+ * @param {((payload: object, responseText: string) => Promise<void>)|null} [opts.onResponse]
+ *   Called when OpenClaw returns a successful response. Used by daemon to send reply back via Murmur.
+ */
+export const flushOpenClawBridgeQueue = async ({ queue, log, limit = 20, onResponse = null }) => {
   const due = queue.claimDue(limit);
   for (const row of due) {
     const target = JSON.parse(String(row.target_json));
@@ -204,6 +229,19 @@ export const flushOpenClawBridgeQueue = async ({ queue, log, limit = 20 }) => {
         target: row.channel_name,
         stdout: out.stdout?.slice(0, 240) || undefined,
       });
+
+      // If replyViaMurmur is enabled, send response back to original sender
+      if (onResponse && target.replyViaMurmur) {
+        const responseText = extractResponseText(out.stdout);
+        if (responseText) {
+          try {
+            await onResponse(payload, responseText);
+            log("info", "Murmur reply queued", { msgId: row.msg_id, to: payload.from, responseLen: responseText.length });
+          } catch (replyErr) {
+            log("warn", "Murmur reply failed", { msgId: row.msg_id, error: replyErr.message });
+          }
+        }
+      }
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       queue.markFailed(row.id, reason, Math.min(60_000, 2_000 * (Number(row.attempts) + 1)));

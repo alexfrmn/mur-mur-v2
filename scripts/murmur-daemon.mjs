@@ -2,13 +2,14 @@
 /**
  * murmur-daemon.mjs — Persistent agent-to-agent messaging daemon.
  */
+import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { NatsBroker } from "@murmurv2/broker-nats";
 import { SQLiteDedupeOutboxStore, SQLiteMessageStore } from "@murmurv2/core";
-import { decryptPayload, verifyEnvelopeSignature } from "@murmurv2/security";
+import { decryptPayload, encryptPayload, signEnvelope, verifyEnvelopeSignature } from "@murmurv2/security";
 import { NotifyQueue, flushNotifyQueue, normalizeNotifyTargets } from "./notify-router.mjs";
 import { OpenClawBridgeQueue, flushOpenClawBridgeQueue, normalizeOpenClawTargets } from "./openclaw-bridge.mjs";
 
@@ -62,6 +63,44 @@ const stableEnvelopePayload = (envelope) => JSON.stringify({
   payloadNonce: envelope.payloadNonce,
 });
 
+/**
+ * Send a reply back to the original sender via Murmur (encrypt + sign + enqueue to outbox).
+ * Used by OpenClaw bridge when replyViaMurmur is enabled.
+ */
+const sendReply = async (originalPayload, responseText) => {
+  const to = originalPayload.from;
+  const peer = peers[to];
+  if (!peer) {
+    log("warn", "Cannot reply — unknown peer", { to });
+    return;
+  }
+
+  const msgId = randomUUID();
+  const conversationId = originalPayload.conversationId || `dm:${agentId}:${to}`;
+  const createdAt = new Date().toISOString();
+
+  const encrypted = await encryptPayload(responseText, peer.encryption.publicKey, keys.encryption.privateKey);
+
+  const envelope = {
+    schemaVersion: "1.0",
+    msgId,
+    conversationId,
+    senderAgentId: agentId,
+    recipients: [to],
+    createdAt,
+    payloadCiphertext: encrypted.ciphertext,
+    payloadNonce: encrypted.nonce,
+    signature: "",
+  };
+
+  envelope.signature = await signEnvelope(stableEnvelopePayload(envelope), keys.signing.privateKey);
+
+  await store.enqueue(peer.subject, envelope);
+  await msgStore.append({ conversationId, msgId, direction: "outbound", sender: agentId, text: responseText, createdAt, transport: "nats" });
+
+  log("info", "Reply enqueued to outbox", { to, msgId, conversationId, textLen: responseText.length });
+};
+
 const onMessage = async (envelope) => {
   const senderId = envelope.senderAgentId;
   const peer = peers[senderId];
@@ -112,7 +151,7 @@ const onMessage = async (envelope) => {
       msgId: envelope.msgId,
       targetCount: openclawTargets.length,
     });
-    await flushOpenClawBridgeQueue({ queue: openclawQueue, log, limit: 20 });
+    await flushOpenClawBridgeQueue({ queue: openclawQueue, log, limit: 20, onResponse: sendReply });
   }
 
   if (notifyTargets.length > 0) {
@@ -152,7 +191,7 @@ const flushLoop = async () => {
     }
 
     try {
-      await flushOpenClawBridgeQueue({ queue: openclawQueue, log, limit: 100 });
+      await flushOpenClawBridgeQueue({ queue: openclawQueue, log, limit: 100, onResponse: sendReply });
     } catch (err) {
       log("error", "OpenClaw bridge flush error", { error: err.message });
     }
@@ -225,7 +264,7 @@ try {
   const pendingBridge = openclawQueue.pendingCount();
   if (pendingBridge > 0) {
     log("info", "Resuming pending OpenClaw bridge dispatches", { pendingBridge });
-    await flushOpenClawBridgeQueue({ queue: openclawQueue, log, limit: 250 });
+    await flushOpenClawBridgeQueue({ queue: openclawQueue, log, limit: 250, onResponse: sendReply });
   }
 
   const pendingNotify = notifyQueue.pendingCount();
