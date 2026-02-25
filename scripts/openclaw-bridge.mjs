@@ -190,7 +190,10 @@ export const dispatchOpenClawBridge = async (target, payload) => {
 const extractResponseText = (stdout) => {
   if (!stdout) return null;
   try {
-    const data = JSON.parse(stdout);
+    // Strip any non-JSON prefix (e.g. "[plugins] ..." lines from openclaw CLI)
+    const jsonStart = stdout.indexOf("{");
+    const jsonStr = jsonStart > 0 ? stdout.slice(jsonStart) : stdout;
+    const data = JSON.parse(jsonStr);
     if (data.status !== "ok") return null;
     const payloads = data.result?.payloads;
     if (!Array.isArray(payloads) || payloads.length === 0) return null;
