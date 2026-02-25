@@ -28,6 +28,7 @@ export const normalizeOpenClawTargets = (notifyConfig) => {
       gatewayUrl: entry?.gatewayUrl,
       gatewayToken: entry?.gatewayToken,
       extraEnv: entry?.extraEnv && typeof entry.extraEnv === "object" ? entry.extraEnv : {},
+      replyViaMurmur: entry?.replyViaMurmur === true,
     }))
     .filter((entry) => entry.enabled);
 };
