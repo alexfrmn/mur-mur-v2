@@ -61,7 +61,7 @@ export class OpenClawBridgeQueue {
   enqueueMessage(payload, targets) {
     const now = nowIso();
     for (const target of targets) {
-      const dedupeKey = `${payload.msgId}:openclaw:${target.channel}`;
+      const dedupeKey = `${payload.from}:${payload.conversationId}:${payload.msgId}:openclaw:${target.channel}`;
       this.db.prepare(`
         INSERT OR IGNORE INTO openclaw_bridge_queue
         (dedupe_key, msg_id, channel_name, target_json, payload_json, status, attempts, next_attempt_at, created_at, updated_at)
@@ -79,8 +79,14 @@ export class OpenClawBridgeQueue {
     }
   }
 
-  claimDue(limit = 50) {
+  claimDue(limit = 50, maxAttempts = 3) {
     const now = nowIso();
+    // Mark exhausted retries as dead
+    this.db.prepare(`
+      UPDATE openclaw_bridge_queue
+      SET status = 'dead', updated_at = ?
+      WHERE status = 'failed' AND attempts >= ?
+    `).run(now, maxAttempts);
     // Atomic claim: mark rows as 'processing' to prevent race conditions
     this.db.prepare(`
       UPDATE openclaw_bridge_queue
