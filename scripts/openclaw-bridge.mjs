@@ -80,12 +80,24 @@ export class OpenClawBridgeQueue {
   }
 
   claimDue(limit = 50) {
+    const now = nowIso();
+    // Atomic claim: mark rows as 'processing' to prevent race conditions
+    this.db.prepare(`
+      UPDATE openclaw_bridge_queue
+      SET status = 'processing', updated_at = ?
+      WHERE id IN (
+        SELECT id FROM openclaw_bridge_queue
+        WHERE status IN ('pending', 'failed') AND next_attempt_at <= ?
+        ORDER BY next_attempt_at ASC
+        LIMIT ?
+      )
+    `).run(now, now, limit);
     return this.db.prepare(`
       SELECT * FROM openclaw_bridge_queue
-      WHERE status IN ('pending', 'failed') AND next_attempt_at <= ?
+      WHERE status = 'processing'
       ORDER BY next_attempt_at ASC
       LIMIT ?
-    `).all(nowIso(), limit);
+    `).all(limit);
   }
 
   markSent(id) {
@@ -173,7 +185,7 @@ const dispatchViaOpenClawCli = async (target, payload) => {
     ...(target.gatewayToken ? { OPENCLAW_GATEWAY_TOKEN: target.gatewayToken } : {}),
   };
 
-  const { stdout, stderr } = await execFileAsync("openclaw", args, { env, timeout: 30_000 });
+  const { stdout, stderr } = await execFileAsync("openclaw", args, { env, timeout: 120_000, maxBuffer: 10 * 1024 * 1024 });
   return { stdout: (stdout || "").trim(), stderr: (stderr || "").trim() };
 };
 
@@ -247,7 +259,7 @@ export const flushOpenClawBridgeQueue = async ({ queue, log, limit = 20, onRespo
         }
       }
     } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
+      const reason = err instanceof Error ? (err.stderr ? err.message + " STDERR: " + err.stderr.slice(0, 500) : err.message) : String(err);
       queue.markFailed(row.id, reason, Math.min(60_000, 2_000 * (Number(row.attempts) + 1)));
       log("warn", "OpenClaw bridge dispatch failed", {
         queueId: row.id,

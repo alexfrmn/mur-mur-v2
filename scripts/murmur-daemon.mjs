@@ -33,7 +33,22 @@ try {
 const { agentId, natsUrl, natsToken, subject, peers, keys } = config;
 const dbPath = path.join(dataDir, "murmur.db");
 const flushIntervalMs = Number(process.env.FLUSH_INTERVAL_MS) || 2000;
+let openclawFlushLock = false;
+const guardedFlushOpenClaw = async (opts) => {
+  if (openclawFlushLock) return 0;
+  openclawFlushLock = true;
+  try { return await flushOpenClawBridgeQueue(opts); }
+  finally { openclawFlushLock = false; }
+};
 const notifyTargets = normalizeNotifyTargets(config.notify);
+const envTelegramFallback = (() => {
+  const botToken = process.env.MURMUR_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.MURMUR_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
+  const topicId = process.env.MURMUR_TELEGRAM_TOPIC_ID || process.env.TELEGRAM_TOPIC_ID;
+  if (notifyTargets.length > 0 || !botToken || !chatId) return [];
+  return [{ type: "telegram", channel: "telegram", botToken, chatId, ...(topicId ? { topicId } : {}) }];
+})();
+const effectiveNotifyTargets = notifyTargets.length > 0 ? notifyTargets : envTelegramFallback;
 const openclawTargets = normalizeOpenClawTargets(config.notify);
 const notifyQueue = new NotifyQueue(dbPath);
 const openclawQueue = new OpenClawBridgeQueue(dbPath);
@@ -44,7 +59,8 @@ log("info", "Daemon starting", {
   natsUrl,
   dbPath,
   flushIntervalMs,
-  notifyTargets: notifyTargets.map((t) => `${t.type}:${t.channel}`),
+  notifyTargets: effectiveNotifyTargets.map((t) => `${t.type}:${t.channel}`),
+  notifyFallbackFromEnv: envTelegramFallback.length > 0,
   openclawTargets: openclawTargets.map((t) => `openclaw:${t.channel}`),
 });
 
@@ -151,14 +167,14 @@ const onMessage = async (envelope) => {
       msgId: envelope.msgId,
       targetCount: openclawTargets.length,
     });
-    await flushOpenClawBridgeQueue({ queue: openclawQueue, log, limit: 20, onResponse: sendReply });
+    await guardedFlushOpenClaw({ queue: openclawQueue, log, limit: 20, onResponse: sendReply });
   }
 
-  if (notifyTargets.length > 0) {
-    notifyQueue.enqueueMessage(payload, notifyTargets);
+  if (effectiveNotifyTargets.length > 0) {
+    notifyQueue.enqueueMessage(payload, effectiveNotifyTargets);
     log("info", "Notifications queued", {
       msgId: envelope.msgId,
-      targetCount: notifyTargets.length,
+      targetCount: effectiveNotifyTargets.length,
     });
   }
 
@@ -191,7 +207,7 @@ const flushLoop = async () => {
     }
 
     try {
-      await flushOpenClawBridgeQueue({ queue: openclawQueue, log, limit: 100, onResponse: sendReply });
+      await guardedFlushOpenClaw({ queue: openclawQueue, log, limit: 100, onResponse: sendReply });
     } catch (err) {
       log("error", "OpenClaw bridge flush error", { error: err.message });
     }
@@ -264,7 +280,7 @@ try {
   const pendingBridge = openclawQueue.pendingCount();
   if (pendingBridge > 0) {
     log("info", "Resuming pending OpenClaw bridge dispatches", { pendingBridge });
-    await flushOpenClawBridgeQueue({ queue: openclawQueue, log, limit: 250, onResponse: sendReply });
+    await guardedFlushOpenClaw({ queue: openclawQueue, log, limit: 250, onResponse: sendReply });
   }
 
   const pendingNotify = notifyQueue.pendingCount();
