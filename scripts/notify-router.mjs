@@ -133,6 +133,14 @@ export class NotifyQueue {
     `).run(nowIso(), nextAttemptAt, reason, id);
   }
 
+  markDead(id, reason) {
+    this.db.prepare(`
+      UPDATE notify_queue
+      SET status = 'dead', attempts = attempts + 1, updated_at = ?, last_error = ?
+      WHERE id = ?
+    `).run(nowIso(), reason, id);
+  }
+
   pendingCount() {
     const row = this.db.prepare(`
       SELECT COUNT(*) as count FROM notify_queue WHERE status IN ('pending', 'failed')
@@ -143,10 +151,19 @@ export class NotifyQueue {
 
 const formatNotifyText = (payload) => `📨 [${payload.from}]\n${payload.text}`;
 
+const TG_MAX_LENGTH = 4000; // Telegram limit is 4096, leave margin
+
 const sendTelegram = async (target, payload) => {
+  let text = formatNotifyText(payload);
+
+  // Truncate if too long for Telegram
+  if (text.length > TG_MAX_LENGTH) {
+    text = text.slice(0, TG_MAX_LENGTH - 40) + "\n\n... [truncated, full in DB]";
+  }
+
   const body = {
     chat_id: target.chatId,
-    text: formatNotifyText(payload),
+    text,
     disable_web_page_preview: true,
   };
   if (target.topicId) body.message_thread_id = Number(target.topicId);
@@ -158,8 +175,10 @@ const sendTelegram = async (target, payload) => {
   });
 
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`telegram-http-${res.status}:${text.slice(0, 280)}`);
+    const errText = await res.text().catch(() => "");
+    const err = new Error(`telegram-http-${res.status}:${errText.slice(0, 280)}`);
+    err.httpStatus = res.status;
+    throw err;
   }
 };
 
@@ -205,13 +224,28 @@ export const flushNotifyQueue = async ({ queue, log, limit = 50 }) => {
       });
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      queue.markFailed(row.id, reason, Math.min(60_000, 2_000 * (Number(row.attempts) + 1)));
-      log("warn", "Notify failed", {
-        queueId: row.id,
-        msgId: row.msg_id,
-        target: `${row.channel_type}:${row.channel_name}`,
-        reason,
-      });
+      const httpStatus = err instanceof Error ? err.httpStatus : undefined;
+      const attempts = Number(row.attempts) + 1;
+
+      // Dead-letter on permanent failures (4xx) or too many retries
+      if ((httpStatus && httpStatus >= 400 && httpStatus < 500) || attempts >= 10) {
+        queue.markDead(row.id, `permanent: ${reason}`);
+        log("error", "Notify dead-lettered", {
+          queueId: row.id,
+          msgId: row.msg_id,
+          target: `${row.channel_type}:${row.channel_name}`,
+          reason,
+          attempts,
+        });
+      } else {
+        queue.markFailed(row.id, reason, Math.min(60_000, 2_000 * attempts));
+        log("warn", "Notify failed", {
+          queueId: row.id,
+          msgId: row.msg_id,
+          target: `${row.channel_type}:${row.channel_name}`,
+          reason,
+        });
+      }
     }
   }
 
