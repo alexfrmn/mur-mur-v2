@@ -1,0 +1,92 @@
+{
+  "agentId": "agent-gemini",
+  "natsUrl": "nats://5.181.3.139:4222",
+  "natsToken": "94c4105cfc57ebc5d93498f6bd0d71f4ffdffb825eea8249c71407f1971ebc12",
+  "subject": "msg.agent-gemini",
+  "dataDir": ".data-gemini",
+  "cryptoProvider": "nacl-x25519-xchacha20poly1305",
+  "keys": {
+    "encryption": {
+      "publicKey": "cqIyf65WU5+z1nwpsz0sbJkAb5q4Uo1jfKJa0+YJrSQ=",
+      "privateKey": "ZUB+NzzxvcDIxtngb7qItNq/nPK8JkEvJugPgCJkLbs="
+    },
+    "signing": {
+      "publicKey": "gEBRfzpUeppOZM5JAW6vxkoUJTiHZ0jQ8XOvCR43vWo=",
+      "privateKey": "5baptzYPBhJPWvIZ+wWdcnBgi8oIlJKWiG/42YPqT7U="
+    }
+  },
+  "peers": {
+    "agent-jarvis": {
+      "encryption": {
+        "publicKey": "kHqKaEuI24zjsJJrdJfAQStdpMu6H+PRMrCadPYqCFc="
+      },
+      "signing": {
+        "publicKey": "JwZfdyv2GDd5ZFFMYNd1ZJBaKJ/X00CoisB7MjGtfyk="
+      },
+      "subject": "msg.agent-jarvis"
+    },
+    "agent-codex": {
+      "encryption": {
+        "publicKey": "nOM9Xa8FsWKAtprpYaZP8Egmr208CWwdgNV9jl5qCwA="
+      },
+      "signing": {
+        "publicKey": "yumMrXyTdfVzrIZgN+oN046lnXx5kjXOpGo1qR0cz3c="
+      },
+      "subject": "msg.agent-codex"
+    },
+    "codex2-agent-hq": {
+      "encryption": {
+        "publicKey": "iLNyIqfITOg/4kF3jK4RXqyWsapINLY19MplcmroLi4="
+      },
+      "signing": {
+        "publicKey": "9sksTpsO2FQi0cK81n5hxdrBfX8EHf4jvOSk9GCUq0w="
+      },
+      "subject": "msg.codex2-agent-hq"
+    },
+    "glm-agent-hq": {
+      "encryption": {
+        "publicKey": "6zKXJOZ/rOeZMyqxOvHjdWayuNeGMRTwzSlMqWoNmmY="
+      },
+      "signing": {
+        "publicKey": "RghKHt1Fp92TPe4vB5KZvbM5S4cjaJGHHwHF9+9FR4U="
+      },
+      "subject": "msg.glm-agent-hq"
+    },
+    "haiku-agent-hq": {
+      "encryption": {
+        "publicKey": "Fa4Ln+DYlHCcFpYw52M1kvgtLUsxgiA4860kISNr+VU="
+      },
+      "signing": {
+        "publicKey": "vi1lfSQMCWPhhcHlbxyOqijPUhsstHdag64GsCM3kzg="
+      },
+      "subject": "msg.haiku-agent-hq"
+    },
+    "glm-worker-agent-hq": {
+      "encryption": {
+        "publicKey": "HCDyo9SAmkK4gHtq7Ge/2jribjh4Z3jZ+G3tdlfuJBM="
+      },
+      "signing": {
+        "publicKey": "XVS94aS1xcWmmiOXj0OX/1kMr3nBtt4J8raXxzdMy7E="
+      },
+      "subject": "msg.glm-worker-agent-hq"
+    },
+    "agent-sasha": {
+      "encryption": {
+        "publicKey": "8IW2up87Z2i6bKvkKFMrUCJqUh0LZiG14bztf6p+bE4="
+      },
+      "signing": {
+        "publicKey": "P/+HWfpjyFiM7PXuSCnfw6eOfz3CNVKoKSPb8Am5bZY="
+      },
+      "subject": "msg.agent-sasha"
+    },
+    "agent-codex-volt": {
+      "encryption": {
+        "publicKey": "EOcDQg4Lt1QIBUbNOYqnsLth6/Sys+D2gIHhCMo/hjI="
+      },
+      "signing": {
+        "publicKey": "gHuSIWD99CIV9GvJ+AM2qShcESODvTbCca0q1SBK9kA="
+      },
+      "subject": "msg.agent-codex-volt"
+    }
+  }
+}

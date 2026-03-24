@@ -1,0 +1,41 @@
+{
+  "agentId": "agent-codex-volt",
+  "natsUrl": "nats://5.181.3.139:4222",
+  "natsToken": "94c4105cfc57ebc5d93498f6bd0d71f4ffdffb825eea8249c71407f1971ebc12",
+  "subject": "msg.agent-codex-volt",
+  "dataDir": ".data-codex-volt",
+  "cryptoProvider": "nacl-x25519-xchacha20poly1305",
+  "keys": {
+    "encryption": {
+      "publicKey": "EOcDQg4Lt1QIBUbNOYqnsLth6/Sys+D2gIHhCMo/hjI=",
+      "privateKey": "YHzdQac4L/+rZBBwRV7Qz+5CsabRPjwcXALFNEIV52Q="
+    },
+    "signing": {
+      "publicKey": "gHuSIWD99CIV9GvJ+AM2qShcESODvTbCca0q1SBK9kA=",
+      "privateKey": "ShKGrP2rpWBk8esZql1EItcKRgGuRy0NhN/yEqhPW64="
+    }
+  },
+  "notify": {
+    "openclaw": {
+      "enabled": true,
+      "channel": "openclaw-main",
+      "routeChannel": "telegram",
+      "sessionKey": "agent:codex-volt:telegram:direct:219787633",
+      "to": "219787633",
+      "gatewayUrl": "http://127.0.0.1:18789",
+      "gatewayToken": "09c068db195f0b7f637630a8ce6f5bec505827de9a14d519",
+      "replyViaMurmur": true
+    }
+  },
+  "peers": {
+    "agent-jarvis": {
+      "encryption": {
+        "publicKey": "kHqKaEuI24zjsJJrdJfAQStdpMu6H+PRMrCadPYqCFc="
+      },
+      "signing": {
+        "publicKey": "JwZfdyv2GDd5ZFFMYNd1ZJBaKJ/X00CoisB7MjGtfyk="
+      },
+      "subject": "msg.agent-jarvis"
+    }
+  }
+}
