@@ -38,6 +38,7 @@ export class OpenClawBridgeQueue {
     this.db = new DatabaseSync(dbPath);
     this.db.exec(`
       PRAGMA journal_mode=WAL;
+      PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS openclaw_bridge_queue (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         dedupe_key TEXT NOT NULL UNIQUE,
@@ -195,9 +196,51 @@ const dispatchViaOpenClawCli = async (target, payload) => {
   return { stdout: (stdout || "").trim(), stderr: (stderr || "").trim() };
 };
 
+/**
+ * Quick gateway health check — timeout 3s.
+ * Returns true if gateway responds with {"ok":true}.
+ */
+const isGatewayAlive = async (gatewayUrl) => {
+  const url = (gatewayUrl || "http://127.0.0.1:18789").replace(/\/$/, "") + "/health";
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.ok === true;
+  } catch { return false; }
+};
+
+/**
+ * Fallback: call on-receive-llm.mjs directly when OpenClaw is down.
+ */
+const dispatchViaLlmFallback = async (target, payload) => {
+  const scriptPath = new URL("./on-receive-llm.mjs", import.meta.url).pathname;
+  const env = {
+    ...process.env,
+    MURMUR_FROM: payload.from,
+    MURMUR_TEXT: payload.text,
+    MURMUR_MSG_ID: payload.msgId,
+    MURMUR_CONVERSATION_ID: payload.conversationId,
+  };
+  const { stdout, stderr } = await execFileAsync("node", [scriptPath], { env, timeout: 120_000 });
+  return { stdout: (stdout || "").trim(), stderr: (stderr || "").trim() };
+};
+
 export const dispatchOpenClawBridge = async (target, payload) => {
   if (target.helperScript) return dispatchViaHelper(target, payload);
   if (target.command) return dispatchViaCommand(target, payload);
+
+  // Health check before OpenClaw dispatch — fallback to direct LLM if gateway dead
+  const gwUrl = target.gatewayUrl || process.env.OPENCLAW_GATEWAY_URL || "http://127.0.0.1:18789";
+  const alive = await isGatewayAlive(gwUrl);
+  if (!alive) {
+    console.error(`[openclaw-bridge] Gateway unhealthy (${gwUrl}), falling back to on-receive-llm.mjs`);
+    return dispatchViaLlmFallback(target, payload);
+  }
+
   return dispatchViaOpenClawCli(target, payload);
 };
 

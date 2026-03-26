@@ -12,6 +12,7 @@ import { SQLiteDedupeOutboxStore, SQLiteMessageStore } from "@murmurv2/core";
 import { decryptPayload, encryptPayload, signEnvelope, verifyEnvelopeSignature } from "@murmurv2/security";
 import { NotifyQueue, flushNotifyQueue, normalizeNotifyTargets } from "./notify-router.mjs";
 import { OpenClawBridgeQueue, flushOpenClawBridgeQueue, normalizeOpenClawTargets } from "./openclaw-bridge.mjs";
+import { vaultGuardCheck } from "./vault-guard.mjs";
 
 const log = (level, msg, data) => {
   const entry = { ts: new Date().toISOString(), level, msg, ...data };
@@ -110,6 +111,9 @@ const sendReply = async (originalPayload, responseText) => {
   };
 
   envelope.signature = await signEnvelope(stableEnvelopePayload(envelope), keys.signing.privateKey);
+
+  // Vault guard: warn if vault content being sent to non-vault agent
+  vaultGuardCheck(to, responseText, log);
 
   await store.enqueue(peer.subject, envelope);
   await msgStore.append({ conversationId, msgId, direction: "outbound", sender: agentId, text: responseText, createdAt, transport: "nats" });

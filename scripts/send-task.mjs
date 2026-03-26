@@ -7,6 +7,7 @@ import { connect, StringCodec } from 'nats';
 import { readFile } from 'fs/promises';
 import { encryptPayload, signEnvelope } from '@murmurv2/security';
 import { randomUUID } from 'crypto';
+import { vaultGuardCheck } from './vault-guard.mjs';
 
 const [,, targetAgent, ...msgParts] = process.argv;
 const message = msgParts.join(' ');
@@ -24,6 +25,15 @@ const peer = config.peers[targetAgent];
 if (!peer) {
   console.error(`Unknown agent: ${targetAgent}. Available: ${Object.keys(config.peers).join(', ')}`);
   process.exit(1);
+}
+
+// Vault guard: warn if vault task going to non-vault agent
+const guard = vaultGuardCheck(targetAgent, message, (level, msg, data) => {
+  console.error(JSON.stringify({ ts: new Date().toISOString(), level, msg, ...data }));
+});
+if (guard.isVaultTask && !guard.allowed) {
+  console.error(`\n⚠️  VAULT_GUARD: message contains vault keywords (${guard.keywords.join(', ')}) but ${targetAgent} has NO vault access.`);
+  console.error(`   Consider using agent-codex-volt or agent-jarvis instead.\n`);
 }
 
 const { ciphertext, nonce } = await encryptPayload(message, peer.encryption.publicKey, config.keys.encryption.privateKey);

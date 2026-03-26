@@ -16,6 +16,7 @@ import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { SQLiteDedupeOutboxStore, SQLiteMessageStore } from "@murmurv2/core";
 import { encryptPayload, signEnvelope } from "@murmurv2/security";
+import { vaultGuardCheck } from "./vault-guard.mjs";
 
 const dataDir = process.env.DATA_DIR || ".data";
 const config = JSON.parse(readFileSync(`${dataDir}/agent-config.json`, "utf8"));
@@ -104,8 +105,21 @@ async function handleTool(name, args) {
 
     fullText += `\n\n[INSTRUCTIONS]\n- Respond with the complete solution\n- Include code in markdown code blocks\n- Be concise but complete`;
 
+    // Vault guard: warn if vault task going to non-vault agent
+    const guard = vaultGuardCheck(to, fullText, (level, msg, data) => {
+      console.error(JSON.stringify({ ts: new Date().toISOString(), level, msg, ...data }));
+    });
+    if (guard.isVaultTask && !guard.allowed) {
+      // Include warning in the response, but do NOT block
+      console.error(`[vault-guard] WARNING: vault keywords ${JSON.stringify(guard.keywords)} in task to ${to}`);
+    }
+
     const conversationId = `task:${randomUUID().substring(0, 8)}`;
     const sent = await sendToPeer(to, fullText, conversationId);
+
+    const vaultWarning = (guard.isVaultTask && !guard.allowed)
+      ? `WARNING: This task contains vault keywords (${guard.keywords.join(", ")}) but ${to} has NO vault access. Consider using agent-codex-volt or agent-jarvis instead.`
+      : undefined;
 
     if (!waitForResponse) {
       return {
@@ -114,6 +128,7 @@ async function handleTool(name, args) {
         conversationId,
         msgId: sent.msgId,
         message: `Task sent to ${to}. Use check_response with conversationId to get the result later.`,
+        ...(vaultWarning && { vault_guard_warning: vaultWarning }),
       };
     }
 
@@ -121,13 +136,14 @@ async function handleTool(name, args) {
     const result = await pollResponse(conversationId, sent.createdAt, timeoutSec * 1000);
 
     if (result.found) {
-      return { status: "completed", agent: to, conversationId, response: result.response };
+      return { status: "completed", agent: to, conversationId, response: result.response, ...(vaultWarning && { vault_guard_warning: vaultWarning }) };
     } else {
       return {
         status: "timeout",
         agent: to,
         conversationId,
         message: `No response after ${timeoutSec}s. Agent may be offline. Use check_response later.`,
+        ...(vaultWarning && { vault_guard_warning: vaultWarning }),
       };
     }
   }

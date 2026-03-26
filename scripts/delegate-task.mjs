@@ -15,6 +15,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { SQLiteDedupeOutboxStore, SQLiteMessageStore } from "@murmurv2/core";
 import { encryptPayload, signEnvelope } from "@murmurv2/security";
+import { vaultGuardCheck } from "./vault-guard.mjs";
 
 const dataDir = process.env.DATA_DIR || ".data";
 const config = JSON.parse(readFileSync(`${dataDir}/agent-config.json`, "utf8"));
@@ -81,6 +82,15 @@ ${taskText}
 const conversationId = `task:${randomUUID().substring(0, 8)}`;
 const msgId = randomUUID();
 const sentAt = new Date().toISOString();
+
+// Vault guard: warn if vault task going to non-vault agent
+const guard = vaultGuardCheck(to, fullText, (level, msg, data) => {
+  console.error(JSON.stringify({ ts: new Date().toISOString(), level, msg, ...data }));
+});
+if (guard.isVaultTask && !guard.allowed) {
+  console.error(`\n⚠️  VAULT_GUARD: task contains vault keywords (${guard.keywords.join(", ")}) but ${to} has NO vault access.`);
+  console.error(`   Consider using agent-codex-volt or agent-jarvis instead.\n`);
+}
 
 // Encrypt and send
 const encrypted = await encryptPayload(fullText, peer.encryption.publicKey, config.keys.encryption.privateKey);
