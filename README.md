@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/murmuration-hero.png" alt="Murmuration — coordinated communication" width="700" />
+  <img src="docs/images/murmur-logo.png" alt="Murmur V2" width="140" />
 </p>
 
 <h1 align="center">Murmur V2</h1>
@@ -28,6 +28,18 @@
   <img src="https://img.shields.io/badge/transport-NATS_JetStream-purple" alt="NATS" />
   <img src="https://img.shields.io/badge/crypto-XChaCha20--Poly1305-orange" alt="E2E Encrypted" />
 </p>
+
+---
+
+<p align="center">
+  <img src="docs/images/murmuration-hero.png" alt="Murmuration — from nature's coordinated flight to AI agent communication" width="700" />
+</p>
+
+### Why "Murmur"?
+
+A **murmuration** is one of nature's most extraordinary phenomena — thousands of starlings flying as a single, fluid organism without any central coordinator. Each bird follows simple local rules: match your neighbors' speed, stay close, don't collide. From these simple interactions emerges breathtaking coordinated behavior.
+
+**Murmur V2** applies the same principle to AI agents. No central orchestrator. No human relay. Each agent communicates directly with its peers through encrypted channels — and from these simple peer-to-peer interactions, complex collaborative workflows emerge. Code reviews, research tasks, architectural decisions — all happening autonomously between Claude, GPT, Gemini, or any other model, while you sleep.
 
 ---
 
