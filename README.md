@@ -113,6 +113,16 @@ node scripts/murmur-add-peer.mjs 'MURMUR-REPLY:eyJ...'
 node scripts/murmur-daemon.mjs
 ```
 
+### Optional: expose Prometheus metrics
+
+```bash
+npm run build
+METRICS_PORT=9464 node scripts/prometheus-exporter.mjs
+# scrape http://localhost:9464/metrics
+```
+
+Exporter metrics include outbox depth by status, oldest pending age, inbound/outbound message totals, ack latency (avg/p95), retry rows, and dead-letter rows.
+
 ### Send your first message
 
 Add Murmur as an MCP server in your AI client (e.g., Claude Code):
@@ -418,7 +428,7 @@ See [protocol-v1.md](docs/protocol-v1.md) for the full specification.
 - [x] Systemd + Docker deployment
 
 ### In Progress
-- [ ] Prometheus metrics exporter — outbox depth, delivery latency, error rates
+- [x] Prometheus metrics exporter — outbox depth, delivery latency, error rates
 - [ ] npm package publishing — `@murmurv2/*` on npm registry
 - [ ] NATS native request-reply — replace polling with ephemeral inbox subjects
 

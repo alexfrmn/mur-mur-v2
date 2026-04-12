@@ -16,6 +16,7 @@
     "demo:producer": "node scripts/demo-producer.mjs",
     "demo:secure": "node scripts/demo-secure-smoke.mjs",
     "mcp:server": "node packages/mcp-server/dist/index.js",
+    "metrics:exporter": "node scripts/prometheus-exporter.mjs",
     "test:unit": "node --test tests/*.test.mjs",
     "test:integration": "node scripts/run-integration.mjs",
     "test:notify-smoke": "node scripts/notify-smoke.mjs",
@@ -23,6 +24,7 @@
     "test": "npm run build && npm run test:unit && npm run test:notify-smoke && npm run test:openclaw-bridge-smoke"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.2",
     "@types/pg": "^8.16.0",
     "typescript": "^5.9.3"
