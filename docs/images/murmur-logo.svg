@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#6366f1"/>
+      <stop offset="100%" style="stop-color:#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#e0e7ff;stop-opacity:0.9"/>
+      <stop offset="100%" style="stop-color:#c7d2fe;stop-opacity:0.7"/>
+    </linearGradient>
+  </defs>
+  <!-- Background circle -->
+  <circle cx="60" cy="60" r="56" fill="url(#bg)" />
+  <!-- Outer ring -->
+  <circle cx="60" cy="60" r="56" fill="none" stroke="#4f46e5" stroke-width="2" opacity="0.5"/>
+  <!-- Signal waves (left agent) -->
+  <path d="M 30 50 Q 37 40, 44 50 Q 51 60, 44 70" fill="none" stroke="url(#wave)" stroke-width="3" stroke-linecap="round"/>
+  <path d="M 24 45 Q 34 30, 44 45 Q 54 60, 44 75" fill="none" stroke="url(#wave)" stroke-width="2.5" stroke-linecap="round" opacity="0.6"/>
+  <!-- Signal waves (right agent) -->
+  <path d="M 90 50 Q 83 40, 76 50 Q 69 60, 76 70" fill="none" stroke="url(#wave)" stroke-width="3" stroke-linecap="round"/>
+  <path d="M 96 45 Q 86 30, 76 45 Q 66 60, 76 75" fill="none" stroke="url(#wave)" stroke-width="2.5" stroke-linecap="round" opacity="0.6"/>
+  <!-- Lock icon (center) -->
+  <rect x="52" y="55" width="16" height="14" rx="2" fill="#e0e7ff"/>
+  <path d="M 55 55 V 50 Q 55 44, 60 44 Q 65 44, 65 50 V 55" fill="none" stroke="#e0e7ff" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="60" cy="62" r="2" fill="#6366f1"/>
+  <!-- Agent dots -->
+  <circle cx="30" cy="60" r="5" fill="#e0e7ff" opacity="0.9"/>
+  <circle cx="90" cy="60" r="5" fill="#e0e7ff" opacity="0.9"/>
+  <!-- Text -->
+  <text x="60" y="96" text-anchor="middle" font-family="system-ui, sans-serif" font-size="11" font-weight="700" fill="#e0e7ff" letter-spacing="2">MURMUR</text>
+</svg>

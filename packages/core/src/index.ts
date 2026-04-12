@@ -525,6 +525,27 @@ export class SQLiteMessageStore {
     return rows;
   }
 
+  async getInboundAfter(conversationId: string, afterTimestamp: string, limit = 10): Promise<LocalMessageRecord[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT
+           id,
+           conversation_id as conversationId,
+           msg_id as msgId,
+           direction,
+           sender,
+           text,
+           created_at as createdAt,
+           transport
+         FROM local_messages
+         WHERE conversation_id = ? AND direction = 'inbound' AND created_at > ?
+         ORDER BY created_at ASC
+         LIMIT ?`,
+      )
+      .all(conversationId, afterTimestamp, limit) as unknown as LocalMessageRecord[];
+    return rows;
+  }
+
   async searchMessages(query: string, limit = 50): Promise<LocalMessageRecord[]> {
     const q = `%${query}%`;
     const rows = this.db

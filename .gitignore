@@ -1,5 +1,22 @@
 node_modules/
-.env
-.DS_Store
+dist/
 packages/*/dist/
 .data/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test artifacts
+.data-test-*/

@@ -1,372 +1,389 @@
-# mur-mur-v2
+<p align="center">
+  <img src="docs/images/murmur-logo.svg" alt="Murmur V2" width="120" />
+</p>
 
-Reliable, secure multi-agent messaging core for OpenClaw-style agent systems.
+<h1 align="center">Murmur V2</h1>
 
-## What is implemented (prod-first + hardening)
+<p align="center">
+  <strong>Encrypted agent-to-agent messaging. Let your AI models talk to each other.</strong>
+</p>
 
-- ACK correlation path in broker (`startAckCorrelation`) to mark outbox rows `acked` by `msgId` and requeue `nack` responses as failed.
-- Persistent optimistic-locking store (`SQLiteDedupeOutboxStore`) for dedupe + outbox state.
-- JSON file stores now emit a startup warning when no external locking is configured (`MURMUR_JSON_STORE_LOCKING=1`), because they are single-process safe by default.
-- Delivery hardening in outbox flush:
-  - exponential backoff with jitter
-  - ack-timeout requeue support (`requeueStaleSent`)
-  - poison-message handling threshold on consumer side
-  - broker connect retry/backoff and optional token auth in `BrokerConfig`
-- Security policy gate before publish:
-  - allowed sender→recipient map
-  - max payload size checks
-- E2E crypto abstraction (`CryptoProvider`) with baseline NaCl-style provider:
-  - X25519 key agreement
-  - XChaCha20-Poly1305 payload encryption
-  - pluggable provider registration
-- MLS scaffold:
-  - `MlsProvider` interface
-  - `MURMUR_ENABLE_MLS=1` feature flag
-  - adapter placeholder that keeps build stable
-- Postgres SQL executor abstraction (`PgSqlExecutor`) for environments that need PG-backed implementations.
-- Minimal functional Telegram bridge (`@murmurv2/bridge-telegram`) for inbound/outbound with strict env/config validation.
-- Local persistent message store (`SQLiteMessageStore`) for conversation history/search.
-- OpenClaw bridge queue with persisted idempotency (`openclaw_bridge_queue`) so inbound Mur-Mur messages can be auto-injected into a CODEX/OpenClaw session.
-- Basic MCP server (`@murmurv2/mcp-server`) exposing:
-  - `send_message`
-  - `list_conversations`
-  - `search_messages`
+<p align="center">
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#how-it-works">How It Works</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#mcp-tools">MCP Tools</a> ·
+  <a href="#deployment">Deployment</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
 
-## Repository Layout
+<p align="center">
+  <img src="https://github.com/alexfrmn/mur-mur-v2/actions/workflows/ci.yml/badge.svg" alt="CI" />
+  <img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen" alt="Node 22+" />
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
+  <img src="https://img.shields.io/badge/transport-NATS_JetStream-purple" alt="NATS" />
+  <img src="https://img.shields.io/badge/crypto-XChaCha20--Poly1305-orange" alt="E2E Encrypted" />
+</p>
 
-```text
-/docs                 ADRs + protocol docs
-/schema               JSON schemas for envelope/ack/policy
-/packages/core        envelope + store primitives (SQLite/JSON/in-memory)
-/packages/broker-nats NATS publish/subscribe/outbox/ACK correlation
-/packages/bridge-*    adapters (murmur/openclaw/telegram)
-/packages/mcp-server  basic MCP stdio server over local SQLite store
-/packages/security    signing/encryption/key helpers
-/packages/observability metrics/tracing helpers
-```
+---
 
-## Install
+## The Problem
 
-```bash
-cd /opt/codex-openclaw/mur-mur-v2
-npm install
-npm run build
-```
+AI agents today are isolated. Claude can't talk to GPT. Your coding assistant can't ask your research agent for context. When you try to make them collaborate, you end up as the human relay — copy-pasting messages between terminals.
 
-## Typecheck
-
-```bash
-npm run typecheck
-```
-
-## Telegram bridge (minimal)
-
-Set env vars:
-
-```bash
-export MURMUR_TELEGRAM_BOT_TOKEN="<bot-token>"
-export MURMUR_TELEGRAM_CHAT_ID="<chat-id>"
-# optional, for forum topics
-export MURMUR_TELEGRAM_TOPIC_ID="<thread-id>"
-
-# optional
-export MURMUR_TELEGRAM_SENDER_AGENT_ID="telegram-bridge"
-export MURMUR_TELEGRAM_RECIPIENT_AGENT_ID="human"
-export MURMUR_STORE_PATH=".data/murmur.db"
-```
-
-Programmatic usage (example):
-
-```ts
-import { TelegramBridge } from "@murmurv2/bridge-telegram";
-
-const bridge = new TelegramBridge();
-const env = bridge.toOutboundEnvelope({ text: "hello from murmur" });
-await bridge.outbound(env);
-
-const inbound = await bridge.inbound();
-console.log(inbound.envelopes);
-```
-
-## Agent-to-Agent Messaging (Murmur Daemon)
-
-Persistent encrypted messaging between agents over NATS. Each agent runs a daemon that automatically delivers and receives messages. Agents interact via MCP tools (`murmur_send`, `murmur_inbox`, `murmur_peers`).
-
-### Architecture
+**Murmur V2 fixes this.** It gives AI agents encrypted, direct communication over NATS — no human in the loop.
 
 ```
-Agent A (Claude CLI)                    Agent B (Claude CLI)
-     │ MCP stdio                             ▲ MCP stdio
-┌────┴──────┐                          ┌─────┴─────┐
-│ MCP Server │                          │ MCP Server │
-│ send→outbox│                          │ inbox←store│
-└────┬───────┘                          └─────▲──────┘
-     │ shared SQLite                          │ shared SQLite
-┌────┴──────────┐    NATS JetStream    ┌──────┴─────────┐
-│ murmur-daemon  │◄═══════════════════►│ murmur-daemon   │
-│ outbox flush   │  encrypted envelopes │ subscribe       │
-│ subscribe      │  + ACK correlation   │ outbox flush    │
-└────────────────┘                      └─────────────────┘
+┌──────────────┐                        ┌──────────────┐
+│  Claude Code  │                        │   GPT Agent   │
+│  (Opus 4.6)   │   "Review this PR"    │  (GPT-5.3)    │
+│               ├───────────────────────►│               │
+│               │◄───────────────────────┤               │
+│               │   "LGTM, 2 nits..."   │               │
+└──────────────┘                        └──────────────┘
+        │                                        │
+        │  MCP stdio                    MCP stdio │
+   ┌────┴────┐     NATS JetStream     ┌────┴────┐
+   │ daemon  │◄═══════════════════════►│ daemon  │
+   │ encrypt │   E2E encrypted msgs    │ decrypt │
+   └─────────┘                         └─────────┘
 ```
+
+## Quick Start
+
+Connect two agents in 3 commands. No JSON editing.
 
 ### Prerequisites
 
-- **Node.js 22+** (uses `node:sqlite`)
-- **NATS server** with JetStream enabled:
+- **Node.js 22+** (uses built-in `node:sqlite`)
+- **NATS server** with JetStream:
   ```bash
-  # Quick start with Docker:
-  docker run -d --name nats -p 4222:4222 nats:2.10-alpine -js --auth YOUR_SECRET_TOKEN
+  docker run -d --name nats -p 4222:4222 nats:2.10-alpine -js --auth YOUR_SECRET
   ```
 
-### Connect Two Agents (Invite Flow)
+### Step 1 — Host generates invite
 
-Three commands, zero JSON editing:
-
-**Step 1 — Host generates invite:**
 ```bash
 git clone https://github.com/alexfrmn/mur-mur-v2.git && cd mur-mur-v2
 npm install && npm run build
-docker run -d --name nats -p 4222:4222 nats:2.10-alpine -js --auth YOUR_SECRET
-AGENT_ID=my-agent NATS_URL=nats://my-server:4222 NATS_TOKEN=YOUR_SECRET \
+
+AGENT_ID=alice NATS_URL=nats://your-server:4222 NATS_TOKEN=YOUR_SECRET \
   node scripts/agent-config-init.mjs
+
 node scripts/murmur-invite.mjs
-# → prints MURMUR:eyJ... blob — send it to your friend via any messenger
+# → Prints MURMUR:eyJ... blob — send it to your peer via any channel
 ```
 
-**Step 2 — Friend joins with the blob:**
+### Step 2 — Peer joins with the blob
+
 ```bash
 git clone https://github.com/alexfrmn/mur-mur-v2.git && cd mur-mur-v2
 npm install && npm run build
-AGENT_ID=friend-agent node scripts/murmur-join.mjs 'MURMUR:eyJ...'
-# → auto-creates config, adds host as peer
-# → prints MURMUR-REPLY:eyJ... blob — send it back to host
+
+AGENT_ID=bob NATS_URL=nats://your-server:4222 NATS_TOKEN=YOUR_SECRET \
+  node scripts/murmur-join.mjs 'MURMUR:eyJ...'
+# → Prints MURMUR-REPLY:eyJ... blob — send it back to host
 ```
 
-**Step 3 — Host adds friend:**
+### Step 3 — Host adds peer
+
 ```bash
 node scripts/murmur-add-peer.mjs 'MURMUR-REPLY:eyJ...'
 ```
 
-**Done! Configure notifications + start daemon:**
+### Start the daemon
+
 ```bash
-# Telegram preset (from env)
-export MURMUR_TELEGRAM_BOT_TOKEN="..."
-export MURMUR_TELEGRAM_CHAT_ID="..."
-node scripts/murmur-notify-init.mjs telegram
-
-# Optional presets
-# node scripts/murmur-notify-init.mjs discord   # uses MURMUR_DISCORD_WEBHOOK_URL
-# node scripts/murmur-notify-init.mjs whatsapp  # uses MURMUR_WHATSAPP_WEBHOOK_URL (bridge placeholder)
-
-# OpenClaw auto-bridge preset (injects inbound Mur-Mur into an OpenClaw session)
-export MURMUR_OPENCLAW_SESSION_ID="<existing-openclaw-session-id>"  # or set MURMUR_OPENCLAW_TO
-node scripts/murmur-openclaw-init.mjs
-# (or: node scripts/murmur-notify-init.mjs openclaw)
-
 node scripts/murmur-daemon.mjs
-# Or production (systemd):
-sudo cp deploy/murmur-daemon.service /etc/systemd/system/
-sudo systemctl enable --now murmur-daemon
-sudo systemctl restart murmur-daemon
 ```
 
-⚠️ **Important:** without the OpenClaw bridge step (`murmur-openclaw-init` or `murmur-notify-init.mjs openclaw`), messages are delivered/stored but **will not be auto-injected into an OpenClaw session**.
+That's it. Alice and Bob can now exchange encrypted messages.
 
-Then test from peer with `murmur_send`; inbound messages are stored durably and queued notifications auto-resume after daemon restarts.
+---
 
-Agents communicate via MCP tools: `murmur_send` / `murmur_inbox` / `murmur_peers`.
+## How It Works
 
-### Manual Setup (CI/scripts)
+```mermaid
+sequenceDiagram
+    participant A as Agent Alice (Claude)
+    participant MA as Alice's MCP Server
+    participant DA as Alice's Daemon
+    participant NATS as NATS JetStream
+    participant DB as Bob's Daemon
+    participant MB as Bob's MCP Server
+    participant B as Agent Bob (GPT)
+
+    A->>MA: murmur_request(to: "bob", text: "Review this code")
+    MA->>MA: Encrypt (X25519 + XChaCha20)
+    MA->>MA: Sign (Ed25519)
+    MA->>DA: Enqueue to SQLite outbox
+    DA->>NATS: Publish encrypted envelope
+    NATS->>DB: Deliver to Bob's subject
+    DB->>DB: Verify signature + decrypt
+    DB->>MB: Store in local_messages
+    Note over MA: Polling every 10s...
+    B->>MB: Process + generate response
+    MB->>DB: Enqueue reply to outbox
+    DB->>NATS: Publish encrypted reply
+    NATS->>DA: Deliver to Alice's subject
+    DA->>MA: Store inbound reply
+    MA->>A: Return reply (polling found it)
+```
+
+### The Key Innovation: `murmur_request`
+
+The biggest pain point with agent-to-agent messaging is the **polling gap** — after sending a message, agents forget to check for replies and ask the human to relay the response.
+
+`murmur_request` solves this. It sends a message and **automatically polls for the reply**, blocking until a response arrives or timeout is reached:
+
+```
+Agent calls murmur_request("bob", "Review this PR")
+  → Message encrypted, signed, enqueued
+  → Polls inbox every 10s
+  → ... 45 seconds later ...
+  → Bob's reply arrives
+  → Returns the reply directly to the agent
+```
+
+This enables **fully autonomous overnight work** — launch 2-3 agents, they collaborate without any human relay.
+
+---
+
+## Features
+
+### Core Messaging
+- **E2E Encryption** — X25519 key agreement + XChaCha20-Poly1305 AEAD
+- **Digital Signatures** — Ed25519 for message authentication
+- **At-Least-Once Delivery** — persistent SQLite outbox with ACK correlation
+- **Dead-Letter Queue** — poison messages quarantined after 3 failed attempts
+- **Exponential Backoff** — with jitter on retry, configurable per broker
+
+### Agent Integration
+- **MCP Server** — 7 tools for any MCP-compatible AI client
+- **`murmur_request`** — send-and-wait: no more manual polling
+- **Invite Flow** — 3 commands to connect two agents, zero JSON editing
+- **OpenClaw Bridge** — route messages through LLM agents for autonomous processing
+- **Telegram Notifications** — get notified when agents talk
+
+### Operations
+- **SQLite WAL** — concurrent reads, write-ahead logging, optimistic locking
+- **NATS JetStream** — sub-millisecond latency, 20MB RAM, durable streams
+- **Systemd Ready** — production service file included
+- **Docker Compose** — one-command NATS setup
+- **Observability Dashboard** — real-time message flow visualization
+
+### Security
+- **Security Policies** — sender→recipient allow-lists, max payload size
+- **MLS Scaffold** — group encryption interface ready (RFC 9420)
+- **No Plaintext** — messages are always encrypted on the wire
+
+---
+
+## MCP Tools
+
+Murmur V2 exposes an MCP server (JSON-RPC over stdio) with 7 tools:
+
+### Agent-to-Agent (require peer config)
+
+| Tool | Description |
+|------|-------------|
+| `murmur_request` | **Send message and wait for reply.** Blocks until response or timeout. Best for autonomous workflows. |
+| `murmur_send` | Send encrypted message (fire-and-forget). Returns immediately after enqueue. |
+| `murmur_inbox` | Read inbound messages from peers. |
+| `murmur_peers` | List known peers and their key status. |
+
+### Local Storage
+
+| Tool | Description |
+|------|-------------|
+| `send_message` | Store a local message in the conversation store. |
+| `list_conversations` | List conversations by recency. |
+| `search_messages` | Full-text search across stored messages. |
+
+### Add to Claude Code
 
 ```bash
-AGENT_ID=agent-jarvis \
-NATS_URL=nats://127.0.0.1:4222 \
-NATS_TOKEN=your-token \
-  node scripts/agent-config-init.mjs
-# Then manually edit .data/agent-config.json peers section
+claude mcp add murmur -- node /path/to/mur-mur-v2/packages/mcp-server/dist/index.js
 ```
 
-### MCP Server
-
-Build first, then run:
-
-```bash
-npm run build
-npm run mcp:server
-```
-
-The server speaks line-delimited JSON-RPC over stdio and supports `initialize`, `tools/list`, and `tools/call`.
-
-**Local-only tools** (always available):
-- `send_message` — store local outbound message
-- `list_conversations` — list conversations
-- `search_messages` — search by text/sender/conversation
-
-**Agent-to-agent tools** (require `.data/agent-config.json`):
-- `murmur_send` — encrypt + sign + enqueue message to peer (daemon delivers)
-- `murmur_inbox` — read inbound messages from other agents
-- `murmur_peers` — list known peers and key status
-
-Use `MURMUR_STORE_PATH` or `DATA_DIR` to configure the SQLite DB location.
-
-## Outbox ACK correlation usage
-
-```ts
-import { NatsBroker } from "@murmurv2/broker-nats";
-import { SQLiteDedupeOutboxStore } from "@murmurv2/core";
-
-const broker = new NatsBroker({ url: "nats://127.0.0.1:4222" });
-const store = new SQLiteDedupeOutboxStore(".data/murmur.db");
-
-await broker.startAckCorrelation({
-  outbox: store,
-  ackSubject: "ack.consumer-a",
-});
-
-await broker.flushOutbox({ outbox: store });
-```
-
-## Secure setup + runbook
-
-### 1) Enable durable store
-
-```bash
-export MURMUR_STORE_PATH=".data/murmur.db"
-```
-
-Use SQLite WAL (default in `SQLiteDedupeOutboxStore`) and back up `.data/` regularly.
-
-### 2) Configure policy guardrails before publish
-
-In broker calls, pass a policy:
-
-```ts
-await broker.flushOutbox({
-  outbox: store,
-  ackTimeoutMs: 30_000,
-  jitterRatio: 0.2,
-  policy: {
-    maxPayloadBytes: 64 * 1024,
-    allowedRoutes: {
-      "telegram-bridge": ["human", "assistant"],
-      "assistant": ["human"],
-    },
-  },
-});
-```
-
-### 3) Configure E2E crypto provider
-
-```ts
-import { NaClCryptoProvider, setCryptoProvider } from "@murmurv2/security";
-setCryptoProvider(new NaClCryptoProvider());
-```
-
-### 4) (Optional) MLS scaffold flag
-
-```bash
-export MURMUR_ENABLE_MLS=1
-```
-
-This only enables scaffolded interfaces right now. See `docs/MLS-SCAFFOLD.md`.
-
-### 5) Validate reliability loop
-
-- start ack correlation worker
-- run outbox flush on interval
-- monitor rows stuck in `sent`
-- requeue stale `sent` using `ackTimeoutMs`
-- alert on `dlq` growth and poison-message nacks
-
-## Notification routing
-
-`murmur-daemon` supports unified notify adapters with retries + idempotent queueing:
+### Add to any MCP client
 
 ```json
 {
-  "notify": {
-    "telegram": { "botToken": "...", "chatId": "...", "topicId": "..." },
-    "webhook": [
-      { "channel": "discord", "url": "https://discord.com/api/webhooks/..." },
-      { "channel": "whatsapp", "url": "https://your-bridge.example/hook" }
-    ],
-    "openclaw": {
-      "enabled": true,
-      "channel": "openclaw-main",
-      "routeChannel": "telegram",
-      "sessionId": "<openclaw-session-id>",
-      "helperScript": "scripts/on-receive-openclaw.mjs"
+  "mcpServers": {
+    "murmur": {
+      "command": "node",
+      "args": ["/path/to/mur-mur-v2/packages/mcp-server/dist/index.js"],
+      "env": {
+        "DATA_DIR": "/path/to/mur-mur-v2/.data"
+      }
     }
   }
 }
 ```
 
-Backward-compatible shapes are also accepted:
-- `notify: { botToken, chatId, topicId }`
-- `notify: { url, headers }`
+---
 
-## Tests
+## Architecture
 
-```bash
-npm test                # build + unit tests + notify smoke
-npm run test:integration
-npm run test:notify-smoke
-npm run test:openclaw-bridge-smoke
+<p align="center">
+  <img src="docs/images/architecture.svg" alt="Murmur V2 Architecture" width="800" />
+</p>
+
+```
+mur-mur-v2/
+├── packages/
+│   ├── core/              # Envelope schema, SQLite stores, policy validation
+│   ├── broker-nats/       # NATS JetStream pub/sub, outbox flush, ACK correlation
+│   ├── security/          # NaCl crypto (X25519, XChaCha20, Ed25519), MLS scaffold
+│   ├── mcp-server/        # JSON-RPC MCP stdio server (7 tools)
+│   ├── bridge-telegram/   # Telegram bot adapter
+│   ├── bridge-openclaw/   # OpenClaw CLI dispatch bridge
+│   ├── bridge-murmur/     # Murmur-to-Murmur federation (stub)
+│   └── observability/     # Metrics and tracing (scaffold)
+├── scripts/               # Daemon, invite flow, notification setup, demos
+├── tests/                 # 22 unit + integration + smoke tests
+├── docs/                  # ADRs, protocol spec, operations guide
+├── deploy/                # systemd unit, docker-compose
+├── dashboard/             # Real-time observability web UI + 3D visualization
+└── schema/                # JSON schemas for envelope and ACK frames
 ```
 
-## Secure local demo (default)
+### Design Decisions
 
-The demo producer/consumer scripts now run a secure end-to-end flow by default:
+| Decision | Choice | Why |
+|----------|--------|-----|
+| Transport | NATS JetStream | Sub-ms latency, 20MB RAM, JetStream persistence, leaf nodes for federation |
+| Encryption | X25519 + XChaCha20-Poly1305 | Modern AEAD, NaCl standard, ~30% faster than AES-GCM |
+| Signatures | Ed25519 | Fast verification, small keys, deterministic |
+| Storage | SQLite (node:sqlite) | Zero dependencies, WAL mode, built into Node 22+ |
+| Group Crypto | MLS (scaffold) | RFC 9420, forward secrecy for groups — deferred to v1.0 |
 
-- producer encrypts payload + signs envelope with the active crypto provider
-- producer enqueues to SQLite outbox and flushes via broker policy checks
-- consumer verifies route/payload policy, verifies signature, decrypts payload, and ACKs
-- producer correlates ACKs back to outbox row status
+See [ADR-001](docs/ADR-001-core-bus-nats.md) and [ADR-002](docs/ADR-002-envelope-crypto.md) for full rationale.
 
-### One-command smoke test
+---
+
+## OpenClaw Integration
+
+Murmur V2 can route messages through [OpenClaw](https://github.com/open-claw/openclaw) agents. When a message arrives, the daemon dispatches it to an OpenClaw agent (Claude, GPT, etc.) and sends the response back over Murmur.
+
+```
+Agent A → Murmur → NATS → Daemon B → OpenClaw CLI → GPT-5 → response → NATS → Agent A
+```
+
+This means you can see the full reasoning chain: what the model thought, what tools it used, and what it replied.
+
+### Setup
 
 ```bash
+export MURMUR_OPENCLAW_SESSION_ID="your-session-id"
+node scripts/murmur-openclaw-init.mjs
+
+# Or use the preset:
+node scripts/murmur-notify-init.mjs openclaw
+```
+
+### Autonomous Agent Teams
+
+With `murmur_request` + OpenClaw bridge, you can run autonomous agent teams overnight:
+
+1. **Agent A** (Claude) sends a code review request via `murmur_request`
+2. **Murmur** encrypts, signs, and delivers to Agent B's daemon
+3. **Agent B's daemon** dispatches to OpenClaw → GPT-5 processes the review
+4. **Response** flows back through Murmur, encrypted
+5. **Agent A** receives the reply automatically (no human relay)
+
+All messages are E2E encrypted. All responses are logged in SQLite.
+
+---
+
+## Deployment
+
+### Systemd (recommended)
+
+```bash
+sudo cp deploy/murmur-daemon.service /etc/systemd/system/
+sudo systemctl enable --now murmur-daemon
+```
+
+### Docker
+
+```bash
+# Start NATS
+docker compose -f deploy/docker-compose.messaging.yml up -d
+
+# Run daemon
+node scripts/murmur-daemon.mjs
+```
+
+### Notification Adapters
+
+```bash
+# Telegram
+node scripts/murmur-notify-init.mjs telegram
+
+# Discord
+node scripts/murmur-notify-init.mjs discord
+
+# OpenClaw auto-bridge
+node scripts/murmur-notify-init.mjs openclaw
+```
+
+---
+
+## Testing
+
+```bash
+npm test                          # Build + all unit tests (22 tests)
+npm run test:integration          # ACK correlation integration
+npm run test:notify-smoke         # Notification adapter smoke
+npm run test:openclaw-bridge-smoke # OpenClaw bridge smoke
+
+# One-command secure E2E demo
 npm run demo:secure
 ```
 
-This will build, start local NATS, run secure consumer + producer, and tear down services.
+---
 
-### Manual run
+## Envelope Format
 
-```bash
-npm run demo:up
-npm run demo:consumer
-# second terminal
-npm run demo:producer
-npm run demo:down
+Every message is an `EnvelopeV1`:
+
+```json
+{
+  "schemaVersion": "1.0",
+  "msgId": "uuid",
+  "conversationId": "dm:alice:bob",
+  "senderAgentId": "alice",
+  "recipients": ["bob"],
+  "createdAt": "2026-04-12T12:00:00.000Z",
+  "payloadCiphertext": "base64...",
+  "payloadNonce": "base64...",
+  "signature": "base64..."
+}
 ```
 
-### Demo environment knobs
+Optional fields: `ttlSeconds`, `traceId`, `sequence`, `parentMsgId`.
 
-```bash
-# transport
-export NATS_URL="nats://127.0.0.1:4222"
-export SUBJECT="msg.demo.secure"
+See [protocol-v1.md](docs/protocol-v1.md) for the full specification.
 
-# identities / policy route
-export SENDER_AGENT_ID="agent-codex"
-export RECIPIENT_AGENT_ID="agent-jarvis"
-export CONSUMER_ID="agent-jarvis"
+---
 
-# data paths
-export OUTBOX_DB_PATH=".data/demo-outbox.db"
-export DEDUPE_DB_PATH=".data/demo-dedupe.db"
-export DEMO_KEYS_PATH=".data/demo-keys.json"
+## Roadmap
 
-# payload + reliability controls
-export MESSAGE="hello secure mur-mur"
-export MAX_PAYLOAD_BYTES="65536"
-export ACK_TIMEOUT_MS="15000"
-export WAIT_FOR_ACK_MS="15000"
-export FLUSH_MAX_ATTEMPTS="5"
+- [x] E2E encryption (NaCl)
+- [x] Invite-based peer setup
+- [x] MCP server with 7 tools
+- [x] `murmur_request` — send-and-wait
+- [x] OpenClaw bridge
+- [x] Observability dashboard
+- [ ] MLS group encryption (RFC 9420)
+- [ ] npm package publishing
+- [ ] WebSocket transport adapter
+- [ ] Murmur-to-Murmur federation
 
-# consumer behavior (default exits after first verified message)
-export DEMO_EXIT_AFTER_ONE="1"
-```
+---
 
-Failure logs are explicit (`[producer] secure demo failed`, `[consumer] secure demo failed`, `[smoke] ... FAIL`) so CI/manual runs can quickly identify policy/crypto/outbox failures.
+## License
+
+[MIT](LICENSE) — Alexander Vasiliev, 2026

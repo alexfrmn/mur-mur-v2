@@ -206,6 +206,96 @@ const handleTool = async (name: string, args: Record<string, unknown>): Promise<
     return { messages: inbound.map(asMessage), count: inbound.length };
   }
 
+  if (name === "murmur_request") {
+    if (!agentConfig || !outbox) throw new Error("agent config not loaded — run agent-config-init.mjs first");
+
+    const to = String(args.to ?? "").trim();
+    if (!to) throw new Error("'to' (recipient agent ID) is required");
+    const text = String(args.text ?? "").trim();
+    if (!text) throw new Error("'text' is required");
+
+    const peer = agentConfig.peers[to];
+    if (!peer) throw new Error(`unknown peer: ${to} — add to peers in agent-config.json`);
+
+    const timeoutMs = Number(args.timeout_ms ?? 300_000);
+    const pollMs = Number(args.poll_interval_ms ?? 10_000);
+    const conversationId = String(args.conversationId ?? `dm:${agentConfig.agentId}:${to}`);
+    const msgId = randomUUID();
+    const sentAt = new Date().toISOString();
+
+    // Encrypt
+    const encrypted = await encryptPayload(
+      text,
+      peer.encryption.publicKey,
+      agentConfig.keys.encryption.privateKey,
+    );
+
+    // Build envelope
+    const envelope: EnvelopeV1 = {
+      schemaVersion: "1.0",
+      msgId,
+      conversationId,
+      senderAgentId: agentConfig.agentId,
+      recipients: [to],
+      createdAt: sentAt,
+      payloadCiphertext: encrypted.ciphertext,
+      payloadNonce: encrypted.nonce,
+      signature: "",
+    };
+
+    // Sign
+    envelope.signature = await signEnvelope(
+      stableEnvelopePayload(envelope),
+      agentConfig.keys.signing.privateKey,
+    );
+
+    // Enqueue to outbox
+    await outbox.enqueue(peer.subject, envelope);
+
+    // Store outbound copy
+    await store.append({
+      conversationId,
+      msgId,
+      direction: "outbound",
+      sender: agentConfig.agentId,
+      text,
+      createdAt: sentAt,
+      transport: "nats",
+    });
+
+    // Poll for response
+    const deadline = Date.now() + timeoutMs;
+    let reply: LocalMessageRecord | null = null;
+
+    while (Date.now() < deadline) {
+      const inbound = await store.getInboundAfter(conversationId, sentAt, 1);
+      if (inbound.length > 0) {
+        reply = inbound[0];
+        break;
+      }
+      await new Promise((r) => setTimeout(r, pollMs));
+    }
+
+    if (reply) {
+      return {
+        status: "received",
+        msgId,
+        conversationId,
+        sentAt,
+        reply: asMessage(reply),
+      };
+    }
+
+    return {
+      status: "timeout",
+      msgId,
+      conversationId,
+      sentAt,
+      timeout_ms: timeoutMs,
+      hint: "Use murmur_inbox to check for late responses",
+    };
+  }
+
   if (name === "murmur_peers") {
     if (!agentConfig) throw new Error("agent config not loaded — run agent-config-init.mjs first");
 
@@ -269,6 +359,22 @@ const tools = [
         to: { type: "string", description: "Recipient agent ID (must be in peers config)" },
         text: { type: "string", description: "Message text (will be encrypted)" },
         conversationId: { type: "string", description: "Optional conversation ID" },
+      },
+      required: ["to", "text"],
+    },
+  },
+  {
+    name: "murmur_request",
+    description:
+      "Send a message and wait for the reply. Combines murmur_send + automatic polling — the tool blocks until the peer responds or timeout is reached. Ideal for autonomous agent-to-agent conversations.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        to: { type: "string", description: "Recipient agent ID (must be in peers config)" },
+        text: { type: "string", description: "Message text (will be encrypted)" },
+        conversationId: { type: "string", description: "Optional conversation ID" },
+        timeout_ms: { type: "number", description: "Max wait time in ms (default: 300000 = 5 min)" },
+        poll_interval_ms: { type: "number", description: "Poll interval in ms (default: 10000 = 10s)" },
       },
       required: ["to", "text"],
     },
