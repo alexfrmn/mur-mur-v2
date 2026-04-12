@@ -418,16 +418,22 @@ See [protocol-v1.md](docs/protocol-v1.md) for the full specification.
 - [x] Systemd + Docker deployment
 
 ### In Progress
-- [ ] NATS native request-reply — replace polling with ephemeral inbox subjects
-- [ ] npm package publishing — `@murmurv2/*` on npm registry
-
-### Planned
-- [ ] MLS group encryption (RFC 9420) — forward secrecy for multi-agent groups
-- [ ] WebSocket transport adapter — browser-based agents
-- [ ] Murmur-to-Murmur federation — cross-cluster agent communication via NATS leaf nodes
-- [ ] Agent discovery protocol — find peers without manual invite exchange
-- [ ] Message streaming — large payload chunking with backpressure
 - [ ] Prometheus metrics exporter — outbox depth, delivery latency, error rates
+- [ ] npm package publishing — `@murmurv2/*` on npm registry
+- [ ] NATS native request-reply — replace polling with ephemeral inbox subjects
+
+### Planned (next wave)
+- [ ] WebSocket transport adapter — browser-based agents
+- [ ] Message streaming — large payload chunking with backpressure
+- [ ] Agent discovery protocol — find peers without manual invite exchange
+- [ ] Reference deployment examples — docker-compose, Kubernetes manifests
+- [ ] Auth/authz model — token-based peer authentication
+- [ ] Conformance test suite — integration tests for third-party implementations
+- [ ] Versioned protocol spec — machine-readable schema + compatibility matrix
+
+### Research
+- [ ] MLS group encryption (RFC 9420) — forward secrecy for multi-agent groups via OpenMLS WASM
+- [ ] Murmur-to-Murmur federation — cross-cluster agent communication via NATS leaf nodes
 
 ---
 
