@@ -1,0 +1,14 @@
+{
+  "name": "@murmurv2/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "pg": "^8.16.3"
+  }
+}

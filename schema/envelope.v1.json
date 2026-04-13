@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mur-mur-v2/schema/envelope.v1.json",
+  "title": "EnvelopeV1",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "msgId",
+    "conversationId",
+    "senderAgentId",
+    "recipients",
+    "createdAt",
+    "payloadCiphertext",
+    "payloadNonce",
+    "signature"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "msgId": { "type": "string", "minLength": 8 },
+    "conversationId": { "type": "string" },
+    "senderAgentId": { "type": "string" },
+    "recipients": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "ttlSeconds": { "type": "integer", "minimum": 1 },
+    "traceId": { "type": "string" },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "parentMsgId": { "type": "string" },
+    "payloadCiphertext": { "type": "string" },
+    "payloadNonce": { "type": "string" },
+    "signature": { "type": "string" }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 500" width="900" height="500" font-family="system-ui, -apple-system, sans-serif">
+  <defs>
+    <linearGradient id="agent-bg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#ede9fe"/>
+      <stop offset="100%" style="stop-color:#ddd6fe"/>
+    </linearGradient>
+    <linearGradient id="daemon-bg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#e0e7ff"/>
+      <stop offset="100%" style="stop-color:#c7d2fe"/>
+    </linearGradient>
+    <linearGradient id="nats-bg" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#6366f1"/>
+      <stop offset="100%" style="stop-color:#8b5cf6"/>
+    </linearGradient>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.1"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="500" rx="12" fill="#fafaf9"/>
+
+  <!-- Title -->
+  <text x="450" y="35" text-anchor="middle" font-size="18" font-weight="700" fill="#1e1b4b">Murmur V2 — Agent-to-Agent Messaging Architecture</text>
+
+  <!-- Agent A Box -->
+  <g filter="url(#shadow)">
+    <rect x="30" y="60" width="200" height="180" rx="10" fill="url(#agent-bg)" stroke="#a78bfa" stroke-width="1.5"/>
+    <text x="130" y="88" text-anchor="middle" font-size="14" font-weight="700" fill="#4c1d95">Agent A (Claude)</text>
+    <text x="130" y="108" text-anchor="middle" font-size="11" fill="#6d28d9">Opus 4.6 / Sonnet</text>
+    <line x1="50" y1="118" x2="210" y2="118" stroke="#c4b5fd" stroke-width="1"/>
+    <text x="130" y="140" text-anchor="middle" font-size="11" fill="#5b21b6">murmur_request()</text>
+    <text x="130" y="158" text-anchor="middle" font-size="11" fill="#5b21b6">murmur_send()</text>
+    <text x="130" y="176" text-anchor="middle" font-size="11" fill="#5b21b6">murmur_inbox()</text>
+    <text x="130" y="200" text-anchor="middle" font-size="10" fill="#7c3aed">MCP stdio</text>
+    <text x="130" y="216" text-anchor="middle" font-size="10" fill="#7c3aed">JSON-RPC 2.0</text>
+  </g>
+
+  <!-- Agent B Box -->
+  <g filter="url(#shadow)">
+    <rect x="670" y="60" width="200" height="180" rx="10" fill="url(#agent-bg)" stroke="#a78bfa" stroke-width="1.5"/>
+    <text x="770" y="88" text-anchor="middle" font-size="14" font-weight="700" fill="#4c1d95">Agent B (GPT)</text>
+    <text x="770" y="108" text-anchor="middle" font-size="11" fill="#6d28d9">GPT-5 / Gemini / etc</text>
+    <line x1="690" y1="118" x2="850" y2="118" stroke="#c4b5fd" stroke-width="1"/>
+    <text x="770" y="140" text-anchor="middle" font-size="11" fill="#5b21b6">murmur_request()</text>
+    <text x="770" y="158" text-anchor="middle" font-size="11" fill="#5b21b6">murmur_send()</text>
+    <text x="770" y="176" text-anchor="middle" font-size="11" fill="#5b21b6">murmur_inbox()</text>
+    <text x="770" y="200" text-anchor="middle" font-size="10" fill="#7c3aed">MCP stdio</text>
+    <text x="770" y="216" text-anchor="middle" font-size="10" fill="#7c3aed">JSON-RPC 2.0</text>
+  </g>
+
+  <!-- MCP Server A -->
+  <g filter="url(#shadow)">
+    <rect x="60" y="280" width="140" height="80" rx="8" fill="#fff" stroke="#6366f1" stroke-width="1.5"/>
+    <text x="130" y="310" text-anchor="middle" font-size="12" font-weight="600" fill="#4338ca">MCP Server</text>
+    <text x="130" y="328" text-anchor="middle" font-size="10" fill="#6366f1">Encrypt + Sign</text>
+    <text x="130" y="344" text-anchor="middle" font-size="10" fill="#6366f1">SQLite store</text>
+  </g>
+
+  <!-- MCP Server B -->
+  <g filter="url(#shadow)">
+    <rect x="700" y="280" width="140" height="80" rx="8" fill="#fff" stroke="#6366f1" stroke-width="1.5"/>
+    <text x="770" y="310" text-anchor="middle" font-size="12" font-weight="600" fill="#4338ca">MCP Server</text>
+    <text x="770" y="328" text-anchor="middle" font-size="10" fill="#6366f1">Decrypt + Verify</text>
+    <text x="770" y="344" text-anchor="middle" font-size="10" fill="#6366f1">SQLite store</text>
+  </g>
+
+  <!-- Daemon A -->
+  <g filter="url(#shadow)">
+    <rect x="60" y="400" width="140" height="70" rx="8" fill="url(#daemon-bg)" stroke="#818cf8" stroke-width="1.5"/>
+    <text x="130" y="428" text-anchor="middle" font-size="12" font-weight="600" fill="#3730a3">Daemon A</text>
+    <text x="130" y="448" text-anchor="middle" font-size="10" fill="#4338ca">Outbox flush + ACK</text>
+  </g>
+
+  <!-- Daemon B -->
+  <g filter="url(#shadow)">
+    <rect x="700" y="400" width="140" height="70" rx="8" fill="url(#daemon-bg)" stroke="#818cf8" stroke-width="1.5"/>
+    <text x="770" y="428" text-anchor="middle" font-size="12" font-weight="600" fill="#3730a3">Daemon B</text>
+    <text x="770" y="448" text-anchor="middle" font-size="10" fill="#4338ca">Subscribe + Notify</text>
+  </g>
+
+  <!-- NATS Central -->
+  <g filter="url(#shadow)">
+    <rect x="310" y="400" width="280" height="70" rx="10" fill="url(#nats-bg)"/>
+    <text x="450" y="430" text-anchor="middle" font-size="15" font-weight="700" fill="#fff">NATS JetStream</text>
+    <text x="450" y="450" text-anchor="middle" font-size="11" fill="#e0e7ff">Durable streams · Sub-ms latency · 20MB RAM</text>
+  </g>
+
+  <!-- Arrows: Agent A → MCP A -->
+  <line x1="130" y1="240" x2="130" y2="280" stroke="#8b5cf6" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- Arrows: Agent B → MCP B -->
+  <line x1="770" y1="240" x2="770" y2="280" stroke="#8b5cf6" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- Arrows: MCP A → Daemon A -->
+  <line x1="130" y1="360" x2="130" y2="400" stroke="#6366f1" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <text x="155" y="385" font-size="9" fill="#6366f1">shared SQLite</text>
+
+  <!-- Arrows: MCP B → Daemon B -->
+  <line x1="770" y1="360" x2="770" y2="400" stroke="#6366f1" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <text x="795" y="385" font-size="9" fill="#6366f1">shared SQLite</text>
+
+  <!-- Arrows: Daemon A → NATS -->
+  <line x1="200" y1="435" x2="310" y2="435" stroke="#4f46e5" stroke-width="2.5" stroke-dasharray="6,3"/>
+  <text x="255" y="425" font-size="9" fill="#4f46e5" font-weight="600">encrypted</text>
+
+  <!-- Arrows: NATS → Daemon B -->
+  <line x1="590" y1="435" x2="700" y2="435" stroke="#4f46e5" stroke-width="2.5" stroke-dasharray="6,3"/>
+  <text x="645" y="425" font-size="9" fill="#4f46e5" font-weight="600">encrypted</text>
+
+  <!-- Arrowhead marker -->
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#6366f1"/>
+    </marker>
+  </defs>
+
+  <!-- OpenClaw bridge (optional) -->
+  <g opacity="0.7">
+    <rect x="350" y="280" width="200" height="65" rx="8" fill="#fef3c7" stroke="#f59e0b" stroke-width="1" stroke-dasharray="4,2"/>
+    <text x="450" y="305" text-anchor="middle" font-size="11" font-weight="600" fill="#92400e">OpenClaw Bridge (optional)</text>
+    <text x="450" y="322" text-anchor="middle" font-size="10" fill="#b45309">Route to LLM agents</text>
+    <text x="450" y="336" text-anchor="middle" font-size="10" fill="#b45309">See reasoning + responses</text>
+  </g>
+
+  <!-- Dotted line from daemon to openclaw -->
+  <line x1="200" y1="420" x2="350" y2="330" stroke="#f59e0b" stroke-width="1" stroke-dasharray="4,2" opacity="0.5"/>
+  <line x1="550" y1="330" x2="700" y2="420" stroke="#f59e0b" stroke-width="1" stroke-dasharray="4,2" opacity="0.5"/>
+</svg>

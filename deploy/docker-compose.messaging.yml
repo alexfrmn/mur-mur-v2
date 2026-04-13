@@ -1,0 +1,9 @@
+services:
+  nats:
+    image: nats:2.10-alpine
+    container_name: murmurv2-nats
+    command: ["-js", "-m", "8222", "--auth", "${NATS_TOKEN}"]
+    ports:
+      - "4222:4222"
+      - "127.0.0.1:8222:8222"
+    restart: unless-stopped

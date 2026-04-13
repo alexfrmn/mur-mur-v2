@@ -1,0 +1,18 @@
+[Unit]
+Description=Murmur V2 Agent Messaging Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/murmur-v2
+ExecStart=/usr/bin/node scripts/murmur-daemon.mjs
+EnvironmentFile=-/opt/murmur-v2/.env
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=murmur-daemon
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./packages/broker-nats" },
+    { "path": "./packages/bridge-murmur" },
+    { "path": "./packages/bridge-openclaw" },
+    { "path": "./packages/bridge-telegram" },
+    { "path": "./packages/mcp-server" },
+    { "path": "./packages/security" },
+    { "path": "./packages/observability" }
+  ]
+}
