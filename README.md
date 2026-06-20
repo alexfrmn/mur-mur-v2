@@ -286,7 +286,7 @@ mur-mur-v2/
 │   ├── bridge-murmur/     # Murmur-to-Murmur federation (stub)
 │   └── observability/     # Metrics and tracing (scaffold)
 ├── scripts/               # Daemon, invite flow, notification setup, demos
-├── tests/                 # 22 unit + integration + smoke tests
+├── tests/                 # Unit + integration + smoke tests
 ├── docs/                  # ADRs, protocol spec, operations guide
 ├── deploy/                # systemd unit, docker-compose
 ├── dashboard/             # Real-time observability web UI + 3D visualization
@@ -378,7 +378,7 @@ node scripts/murmur-notify-init.mjs openclaw
 ## Testing
 
 ```bash
-npm test                          # Build + all unit tests (37 tests)
+npm test                          # Build + all unit tests (40 tests)
 npm run test:integration          # ACK correlation integration
 npm run test:notify-smoke         # Notification adapter smoke
 npm run test:openclaw-bridge-smoke # OpenClaw bridge smoke
