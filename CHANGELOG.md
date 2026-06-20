@@ -7,9 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-06-20
+
 ### Added
 
-- `murmur_request` send-and-wait tool for synchronous request/response over NATS
+- `murmur_request` send-and-wait tool for synchronous request/response over NATS.
+- Mandatory WakeMonitor with deduplication, loop-breaker, audit-gate, and drain guards.
+- WakeMonitor stateless and persistent wake modes.
+
+### Fixed
+
+- ACK routing now targets the original sender, not the consumer.
+- Reconnect resilience defaults for long-running NATS clients.
+
+### Changed
+
+- Transport documentation now reflects core NATS plus SQLite outbox behavior without claiming JetStream durability.
+- Security bump: `ws` upgraded to 8.21.0.
 
 ## [0.2.0] - 2026-03-26
 
@@ -39,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Durable unified notify queue with quick init presets ([e7069d0])
 - Invite-based peer setup -- 3 commands, zero JSON editing ([6a60294])
 
-[Unreleased]: https://github.com/alexfrmn/mur-mur-v2/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/alexfrmn/mur-mur-v2/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/alexfrmn/mur-mur-v2/compare/v0.2.0...v2.0.0
 [0.2.0]: https://github.com/alexfrmn/mur-mur-v2/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/alexfrmn/mur-mur-v2/releases/tag/v0.1.0
