@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 
 const ensureObject = (value) => (value && typeof value === "object" ? value : {});
-const validMode = (mode) => mode === "persistent" || mode === "stateless";
+const validMode = (mode) => mode === "persistent" || mode === "stateless" || mode === "codex_app_server";
 
 export const normalizeWakeConfig = (config = {}) => {
   const wake = ensureObject(config.wake);
@@ -13,6 +13,8 @@ export const normalizeWakeConfig = (config = {}) => {
       return [agentId, {
         mode: validMode(value.mode) ? value.mode : undefined,
         target: typeof value.target === "string" && value.target.trim() ? value.target.trim() : undefined,
+        socketPath: typeof value.socketPath === "string" && value.socketPath.trim() ? value.socketPath.trim() : undefined,
+        threadId: typeof value.threadId === "string" && value.threadId.trim() ? value.threadId.trim() : undefined,
       }];
     }),
   );
@@ -178,7 +180,7 @@ export class WakeMonitor {
 
     try {
       const peer = this.peerFor(payload);
-      if (peer.mode === "persistent") {
+      if (peer.mode === "persistent" || peer.mode === "codex_app_server") {
         if (!this.injector) throw new Error(`wake-persistent-injector-missing:${payload.from}`);
         await this.injector(payload, peer);
         this.log("info", "WakeMonitor persistent wake completed", { msgId: payload.msgId, conversationId: payload.conversationId, target: peer.target });
