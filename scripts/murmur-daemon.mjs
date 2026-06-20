@@ -12,7 +12,7 @@ import { SQLiteDedupeOutboxStore, SQLiteMessageStore } from "@murmurv2/core";
 import { decryptPayload, encryptPayload, signEnvelope, verifyEnvelopeSignature } from "@murmurv2/security";
 import { NotifyQueue, flushNotifyQueue, normalizeNotifyTargets } from "./notify-router.mjs";
 import { OpenClawBridgeQueue, flushOpenClawBridgeQueue, normalizeOpenClawTargets } from "./openclaw-bridge.mjs";
-import { WakeMonitor, createShellHook, normalizeWakeConfig } from "./wake-monitor.mjs";
+import { WakeMonitor, createAuditShellHook, createShellHook, normalizeWakeConfig } from "./wake-monitor.mjs";
 // vault-guard: optional content policy hook (not included in OSS release)
 
 const log = (level, msg, data) => {
@@ -108,18 +108,31 @@ const loadInboundAfter = async (cursor) => {
   }));
 };
 
+const enqueueWakeNotification = async (payload, reason) => {
+  log("warn", "WakeMonitor fallback notify", { reason, msgId: payload.msgId, from: payload.from });
+  if (effectiveNotifyTargets.length === 0) return;
+  notifyQueue.enqueueMessage({
+    ...payload,
+    text: `[WakeMonitor ${reason}] ${payload.text}`,
+  }, effectiveNotifyTargets);
+};
+
 const wakeMonitor = new WakeMonitor({
   ...wakeConfig,
   initialCursor: inboundCursor(),
   loadBacklogAfter: loadInboundAfter,
+  auditHook: createAuditShellHook({ command: wakeConfig.auditHook, log }),
   hook: createShellHook({ command: config.onReceive, log }),
+  notify: enqueueWakeNotification,
   log,
 });
 
 const proxyWakeMonitor = new WakeMonitor({
   ...wakeConfig,
   initialCursor: inboundCursor(),
+  auditHook: createAuditShellHook({ command: wakeConfig.auditHook, log }),
   hook: createShellHook({ command: config.proxyOnReceive, log }),
+  notify: enqueueWakeNotification,
   log,
 });
 
