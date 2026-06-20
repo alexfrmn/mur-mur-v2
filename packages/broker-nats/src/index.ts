@@ -86,11 +86,11 @@ export class NatsBroker {
     await this.connect();
 
     const sub = this.nc!.subscribe(params.subject);
-    const ackSubject = `ack.${params.consumerId}`;
 
     (async () => {
       for await (const m of sub) {
         let msgId = "unknown";
+        let ackSubject = `ack.${params.consumerId}`;
         try {
           const decoded = JSON.parse(this.sc.decode(m.data));
           if (!isEnvelopeV1(decoded)) {
@@ -99,6 +99,7 @@ export class NatsBroker {
           }
 
           msgId = decoded.msgId;
+          ackSubject = `ack.${decoded.senderAgentId}`;
           const isDup = await params.dedupe.seen(decoded.msgId, params.consumerId);
           if (isDup) {
             await this.publishAck(ackSubject, createAck(decoded.msgId, params.consumerId, "ack", "duplicate-ignored"));
