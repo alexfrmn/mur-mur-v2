@@ -12,7 +12,7 @@ import { SQLiteDedupeOutboxStore, SQLiteMessageStore } from "@murmurv2/core";
 import { decryptPayload, encryptPayload, signEnvelope, verifyEnvelopeSignature } from "@murmurv2/security";
 import { NotifyQueue, flushNotifyQueue, normalizeNotifyTargets } from "./notify-router.mjs";
 import { OpenClawBridgeQueue, flushOpenClawBridgeQueue, normalizeOpenClawTargets } from "./openclaw-bridge.mjs";
-import { WakeMonitor, createAuditShellHook, createShellHook, normalizeWakeConfig } from "./wake-monitor.mjs";
+import { WakeMonitor, createAuditShellHook, createShellHook, createTmuxInjector, normalizeWakeConfig } from "./wake-monitor.mjs";
 // vault-guard: optional content policy hook (not included in OSS release)
 
 const log = (level, msg, data) => {
@@ -123,6 +123,7 @@ const wakeMonitor = new WakeMonitor({
   loadBacklogAfter: loadInboundAfter,
   auditHook: createAuditShellHook({ command: wakeConfig.auditHook, log }),
   hook: createShellHook({ command: config.onReceive, log }),
+  injector: createTmuxInjector({ log }),
   notify: enqueueWakeNotification,
   log,
 });
@@ -132,6 +133,7 @@ const proxyWakeMonitor = new WakeMonitor({
   initialCursor: inboundCursor(),
   auditHook: createAuditShellHook({ command: wakeConfig.auditHook, log }),
   hook: createShellHook({ command: config.proxyOnReceive, log }),
+  injector: createTmuxInjector({ log }),
   notify: enqueueWakeNotification,
   log,
 });

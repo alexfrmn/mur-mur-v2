@@ -378,7 +378,7 @@ node scripts/murmur-notify-init.mjs openclaw
 ## Testing
 
 ```bash
-npm test                          # Build + all unit tests (34 tests)
+npm test                          # Build + all unit tests (37 tests)
 npm run test:integration          # ACK correlation integration
 npm run test:notify-smoke         # Notification adapter smoke
 npm run test:openclaw-bridge-smoke # OpenClaw bridge smoke

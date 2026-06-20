@@ -1,14 +1,25 @@
 import { execFile } from "node:child_process";
 
 const ensureObject = (value) => (value && typeof value === "object" ? value : {});
+const validMode = (mode) => mode === "persistent" || mode === "stateless";
 
 export const normalizeWakeConfig = (config = {}) => {
   const wake = ensureObject(config.wake);
   const dedup = ensureObject(wake.dedup);
   const loopBreaker = ensureObject(wake.loopBreaker);
+  const peers = Object.fromEntries(
+    Object.entries(ensureObject(wake.peers)).map(([agentId, peer]) => {
+      const value = ensureObject(peer);
+      return [agentId, {
+        mode: validMode(value.mode) ? value.mode : undefined,
+        target: typeof value.target === "string" && value.target.trim() ? value.target.trim() : undefined,
+      }];
+    }),
+  );
   return {
     enabled: wake.enabled !== false,
-    mode: wake.mode || "stateless",
+    mode: validMode(wake.mode) ? wake.mode : "stateless",
+    peers,
     auditHook: typeof wake.auditHook === "string" && wake.auditHook.trim() ? wake.auditHook.trim() : null,
     dedup: {
       cooldownMs: Number.isFinite(Number(dedup.cooldownMs)) ? Number(dedup.cooldownMs) : 300000,
@@ -17,6 +28,18 @@ export const normalizeWakeConfig = (config = {}) => {
       maxWakes: Number.isFinite(Number(loopBreaker.maxWakes)) ? Number(loopBreaker.maxWakes) : 5,
       windowMs: Number.isFinite(Number(loopBreaker.windowMs)) ? Number(loopBreaker.windowMs) : 60000,
     },
+  };
+};
+
+export const createTmuxInjector = ({ exec = execFile, log = () => {} } = {}) => {
+  const run = (args) => new Promise((resolve, reject) => {
+    exec("tmux", args, (err) => err ? reject(err) : resolve());
+  });
+  return async (payload, peer) => {
+    if (!peer?.target) throw new Error(`wake-persistent-target-missing:${payload.from}`);
+    await run(["send-keys", "-t", peer.target, "-l", payload.text]);
+    await run(["send-keys", "-t", peer.target, "Enter"]);
+    log("info", "WakeMonitor persistent injected", { msgId: payload.msgId, target: peer.target });
   };
 };
 
@@ -66,12 +89,14 @@ export class WakeMonitor {
     const wakeConfig = normalizeWakeConfig({ wake: options });
     this.enabled = options.enabled ?? wakeConfig.enabled;
     this.mode = options.mode ?? wakeConfig.mode;
+    this.peers = options.peers ?? wakeConfig.peers;
     this.cooldownMs = options.dedup?.cooldownMs ?? wakeConfig.dedup.cooldownMs;
     this.loopBreaker = {
       maxWakes: options.loopBreaker?.maxWakes ?? wakeConfig.loopBreaker.maxWakes,
       windowMs: options.loopBreaker?.windowMs ?? wakeConfig.loopBreaker.windowMs,
     };
     this.hook = options.hook || null;
+    this.injector = options.injector || null;
     this.auditHook = options.auditHook || null;
     this.notify = options.notify || null;
     this.loadBacklogAfter = options.loadBacklogAfter || null;
@@ -87,7 +112,7 @@ export class WakeMonitor {
   }
 
   async onInbound(payload) {
-    if (!this.enabled || this.mode !== "stateless") return;
+    if (!this.enabled) return;
     this.enqueue(payload);
     await this.drain();
   }
@@ -152,8 +177,15 @@ export class WakeMonitor {
     }
 
     try {
-      if (this.hook) await this.hook(payload);
-      this.log("info", "WakeMonitor hook completed", { msgId: payload.msgId, conversationId: payload.conversationId });
+      const peer = this.peerFor(payload);
+      if (peer.mode === "persistent") {
+        if (!this.injector) throw new Error(`wake-persistent-injector-missing:${payload.from}`);
+        await this.injector(payload, peer);
+        this.log("info", "WakeMonitor persistent wake completed", { msgId: payload.msgId, conversationId: payload.conversationId, target: peer.target });
+      } else {
+        if (this.hook) await this.hook(payload);
+        this.log("info", "WakeMonitor hook completed", { msgId: payload.msgId, conversationId: payload.conversationId });
+      }
     } catch (err) {
       const e = err instanceof Error ? err : new Error(String(err));
       this.log("warn", "WakeMonitor hook error", { error: e.message, msgId: payload.msgId });
@@ -209,5 +241,13 @@ export class WakeMonitor {
 
   keyFor(payload) {
     return payload.msgId;
+  }
+
+  peerFor(payload) {
+    const peer = ensureObject(this.peers?.[payload.from]);
+    return {
+      ...peer,
+      mode: validMode(peer.mode) ? peer.mode : this.mode,
+    };
   }
 }
