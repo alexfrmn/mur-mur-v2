@@ -41,8 +41,46 @@ Drain semantics:
 Codex is woken over the `codex app-server` Unix-socket transport
 (`--listen unix://…`): a NATS subscriber acts as a JSON-RPC client and issues
 `turn/start` on the live thread when a Murmur message arrives. Replaces the old
-`codex-murmur-watch` polling. Implementation lands separately from the
-Claude-side drain.
+`codex-murmur-watch` polling.
+
+Codex runtime facts verified against Codex CLI `0.141.0`:
+
+- `codex app-server --help` is present.
+- `--listen unix://PATH` is supported.
+- `codex app-server generate-ts --experimental` exposes JSON-RPC method
+  `turn/start` with `TurnStartParams { threadId, input }`.
+
+Configure a Codex peer as a persistent app-server wake target:
+
+```json
+{
+  "wake": {
+    "peers": {
+      "agent-jarvis": {
+        "mode": "codex_app_server",
+        "socketPath": "/home/codexworker/.codex/app-server.sock",
+        "threadId": "thread-id-of-live-codex-session"
+      }
+    }
+  }
+}
+```
+
+The daemon sends:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "turn/start",
+  "params": {
+    "threadId": "...",
+    "input": [{ "type": "text", "text": "[MURMUR WAKE]...", "text_elements": [] }]
+  }
+}
+```
+
+If the Unix socket or live `threadId` is absent, wake fails loud in daemon logs
+instead of silently falling back to polling.
 
 ## Why not tmux / OpenClaw
 
