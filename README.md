@@ -25,7 +25,7 @@
   <img src="https://github.com/alexfrmn/mur-mur-v2/actions/workflows/ci.yml/badge.svg" alt="CI" />
   <img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen" alt="Node 22+" />
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
-  <img src="https://img.shields.io/badge/transport-NATS_JetStream-purple" alt="NATS" />
+  <img src="https://img.shields.io/badge/transport-core_NATS_%2B_SQLite_outbox-purple" alt="core NATS plus SQLite outbox" />
   <img src="https://img.shields.io/badge/crypto-XChaCha20--Poly1305-orange" alt="E2E Encrypted" />
 </p>
 
@@ -59,7 +59,7 @@ AI agents today are isolated. Claude can't talk to GPT. Your coding assistant ca
 └──────────────┘                        └──────────────┘
         │                                        │
         │  MCP stdio                    MCP stdio │
-   ┌────┴────┐     NATS JetStream     ┌────┴────┐
+   ┌────┴────┐       core NATS        ┌────┴────┐
    │ daemon  │◄═══════════════════════►│ daemon  │
    │ encrypt │   E2E encrypted msgs    │ decrypt │
    └─────────┘                         └─────────┘
@@ -72,7 +72,7 @@ Connect two agents in 3 commands. No JSON editing.
 ### Prerequisites
 
 - **Node.js 22+** (uses built-in `node:sqlite`)
-- **NATS server** with JetStream:
+- **NATS server**:
   ```bash
   docker run -d --name nats -p 4222:4222 nats:2.10-alpine -js --auth YOUR_SECRET
   ```
@@ -152,7 +152,7 @@ sequenceDiagram
     participant A as Agent Alice (Claude)
     participant MA as Alice's MCP Server
     participant DA as Alice's Daemon
-    participant NATS as NATS JetStream
+    participant NATS as core NATS
     participant DB as Bob's Daemon
     participant MB as Bob's MCP Server
     participant B as Agent Bob (GPT)
@@ -211,7 +211,7 @@ This enables **fully autonomous overnight work** — launch 2-3 agents, they col
 
 ### Operations
 - **SQLite WAL** — concurrent reads, write-ahead logging, optimistic locking
-- **NATS JetStream** — sub-millisecond latency, 20MB RAM, durable streams
+- **Core NATS + SQLite outbox** — low-latency pub/sub with app-level at-least-once delivery, ACK correlation, DLQ, and unbounded dedupe
 - **Systemd Ready** — production service file included
 - **Docker Compose** — one-command NATS setup
 - **Observability Dashboard** — real-time message flow visualization
@@ -278,7 +278,7 @@ claude mcp add murmur -- node /path/to/mur-mur-v2/packages/mcp-server/dist/index
 mur-mur-v2/
 ├── packages/
 │   ├── core/              # Envelope schema, SQLite stores, policy validation
-│   ├── broker-nats/       # NATS JetStream pub/sub, outbox flush, ACK correlation
+│   ├── broker-nats/       # core NATS pub/sub, outbox flush, ACK correlation
 │   ├── security/          # NaCl crypto (X25519, XChaCha20, Ed25519), MLS scaffold
 │   ├── mcp-server/        # JSON-RPC MCP stdio server (7 tools)
 │   ├── bridge-telegram/   # Telegram bot adapter
@@ -297,7 +297,7 @@ mur-mur-v2/
 
 | Decision | Choice | Why |
 |----------|--------|-----|
-| Transport | NATS JetStream | Sub-ms latency, 20MB RAM, JetStream persistence, leaf nodes for federation |
+| Transport | core NATS + SQLite outbox | Low-latency pub/sub, app-level at-least-once delivery, ACK correlation, DLQ, unbounded dedupe |
 | Encryption | X25519 + XChaCha20-Poly1305 | Modern AEAD, NaCl standard, ~30% faster than AES-GCM |
 | Signatures | Ed25519 | Fast verification, small keys, deterministic |
 | Storage | SQLite (node:sqlite) | Zero dependencies, WAL mode, built into Node 22+ |
@@ -378,7 +378,7 @@ node scripts/murmur-notify-init.mjs openclaw
 ## Testing
 
 ```bash
-npm test                          # Build + all unit tests (22 tests)
+npm test                          # Build + all unit tests (24 tests)
 npm run test:integration          # ACK correlation integration
 npm run test:notify-smoke         # Notification adapter smoke
 npm run test:openclaw-bridge-smoke # OpenClaw bridge smoke
@@ -449,7 +449,7 @@ See [protocol-v1.md](docs/protocol-v1.md) for the full specification.
 
 ## Acknowledgments
 
-Murmur V2 is built upon the ideas and protocol design of the original [Murmur](https://github.com/slopus/murmur) by [@slopus](https://github.com/slopus). The original Murmur established the core concept of encrypted agent-to-agent messaging with Double Ratchet cryptography. Murmur V2 extends this foundation with NATS JetStream transport, MCP integration, persistent outbox delivery, and production hardening for autonomous multi-agent workflows.
+Murmur V2 is built upon the ideas and protocol design of the original [Murmur](https://github.com/slopus/murmur) by [@slopus](https://github.com/slopus). The original Murmur established the core concept of encrypted agent-to-agent messaging with Double Ratchet cryptography. Murmur V2 extends this foundation with core NATS transport, MCP integration, persistent SQLite outbox delivery, and production hardening for autonomous multi-agent workflows.
 
 ---
 
