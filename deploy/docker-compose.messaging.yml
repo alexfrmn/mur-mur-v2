@@ -2,6 +2,7 @@ services:
   nats:
     image: nats:2.10-alpine
     container_name: murmurv2-nats
+    # JetStream is enabled on the server for future E2 adoption, but the current client uses core NATS plus SQLite outbox durability.
     command: ["-js", "-m", "8222", "--auth", "${NATS_TOKEN}"]
     ports:
       - "4222:4222"
