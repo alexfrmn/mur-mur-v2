@@ -1,4 +1,4 @@
-import { connect, type NatsConnection, StringCodec, type Subscription } from "nats";
+import { connect, type ConnectionOptions, type NatsConnection, StringCodec, type Subscription } from "nats";
 import {
   applyJitter,
   computeBackoffMs,
@@ -19,14 +19,40 @@ export interface BrokerConfig {
   connectMaxAttempts?: number;
   connectBaseBackoffMs?: number;
   connectJitterRatio?: number;
+  maxReconnectAttempts?: number;
+  reconnectTimeWait?: number;
+  reconnectJitter?: number;
+  pingInterval?: number;
+  maxPingOut?: number;
+  waitOnFirstConnect?: boolean;
+  onStatus?: (status: BrokerStatusEvent) => void;
 }
 
 export type MessageHandler = (envelope: EnvelopeV1) => Promise<void>;
+
+export interface BrokerStatusEvent {
+  type: string;
+  data?: unknown;
+  reconnects: number;
+}
+
+export const buildNatsConnectionOptions = (config: BrokerConfig): ConnectionOptions => ({
+  servers: config.url,
+  token: config.token,
+  maxReconnectAttempts: config.maxReconnectAttempts ?? -1,
+  reconnectTimeWait: config.reconnectTimeWait ?? 2000,
+  reconnectJitter: config.reconnectJitter ?? 500,
+  pingInterval: config.pingInterval ?? 20000,
+  maxPingOut: config.maxPingOut ?? 2,
+  waitOnFirstConnect: config.waitOnFirstConnect ?? true,
+});
 
 export class NatsBroker {
   private nc?: NatsConnection;
   private readonly sc = StringCodec();
   private readonly failedDeliveries = new Map<string, number>();
+  private reconnects = 0;
+  private statusLoop?: Promise<void>;
 
   constructor(private readonly config: BrokerConfig) {}
 
@@ -40,10 +66,8 @@ export class NatsBroker {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
-        this.nc = await connect({
-          servers: this.config.url,
-          token: this.config.token,
-        });
+        this.nc = await connect(buildNatsConnectionOptions(this.config));
+        this.startStatusLoop(this.nc);
         return;
       } catch (err) {
         lastErr = err;
@@ -60,6 +84,29 @@ export class NatsBroker {
     if (!this.nc) return;
     await this.nc.drain();
     this.nc = undefined;
+  }
+
+  getReconnectCount(): number {
+    return this.reconnects;
+  }
+
+  private startStatusLoop(nc: NatsConnection): void {
+    if (this.statusLoop) return;
+    this.statusLoop = (async () => {
+      for await (const status of nc.status()) {
+        if (status.type === "reconnect") this.reconnects += 1;
+        if (status.type === "disconnect" || status.type === "reconnect" || status.type === "update") {
+          const event = { type: status.type, data: status.data, reconnects: this.reconnects };
+          this.config.onStatus?.(event);
+          console.info("[NatsBroker.status]", event);
+        }
+      }
+    })().catch((err) => {
+      const e = err instanceof Error ? err : new Error(String(err));
+      console.error("[NatsBroker.status] loop crashed", { message: e.message, stack: e.stack });
+    }).finally(() => {
+      this.statusLoop = undefined;
+    });
   }
 
   async publish(subject: string, envelope: EnvelopeV1, policy?: SecurityPolicy): Promise<void> {

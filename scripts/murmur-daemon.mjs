@@ -224,7 +224,7 @@ const flushLoop = async () => {
 };
 
 const shutdown = async (signal) => {
-  log("info", "Shutdown signal received", { signal });
+  log("info", "Shutdown signal received, draining NATS", { signal });
   running = false;
   try {
     await broker.close();
