@@ -3,8 +3,8 @@
  * murmur-daemon.mjs — Persistent agent-to-agent messaging daemon.
  */
 import { randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { NatsBroker } from "@murmurv2/broker-nats";
@@ -12,6 +12,7 @@ import { SQLiteDedupeOutboxStore, SQLiteMessageStore } from "@murmurv2/core";
 import { decryptPayload, encryptPayload, signEnvelope, verifyEnvelopeSignature } from "@murmurv2/security";
 import { NotifyQueue, flushNotifyQueue, normalizeNotifyTargets } from "./notify-router.mjs";
 import { OpenClawBridgeQueue, flushOpenClawBridgeQueue, normalizeOpenClawTargets } from "./openclaw-bridge.mjs";
+import { WakeMonitor, createShellHook, normalizeWakeConfig } from "./wake-monitor.mjs";
 // vault-guard: optional content policy hook (not included in OSS release)
 
 const log = (level, msg, data) => {
@@ -53,6 +54,8 @@ const effectiveNotifyTargets = notifyTargets.length > 0 ? notifyTargets : envTel
 const openclawTargets = normalizeOpenClawTargets(config.notify);
 const notifyQueue = new NotifyQueue(dbPath);
 const openclawQueue = new OpenClawBridgeQueue(dbPath);
+const wakeDb = new DatabaseSync(dbPath);
+const wakeConfig = normalizeWakeConfig(config);
 
 log("info", "Daemon starting", {
   agentId,
@@ -68,6 +71,57 @@ log("info", "Daemon starting", {
 const store = new SQLiteDedupeOutboxStore(dbPath);
 const msgStore = new SQLiteMessageStore(dbPath);
 const broker = new NatsBroker({ url: natsUrl, token: natsToken });
+
+const inboundCursor = () => {
+  const row = wakeDb.prepare("SELECT COALESCE(MAX(rowid), 0) as cursor FROM local_messages WHERE direction = 'inbound'").get();
+  return Number(row?.cursor ?? 0);
+};
+
+const inboundCursorForMsg = (msgId) => {
+  const row = wakeDb.prepare("SELECT rowid as cursor FROM local_messages WHERE direction = 'inbound' AND msg_id = ? ORDER BY rowid DESC LIMIT 1").get(msgId);
+  return Number(row?.cursor ?? 0);
+};
+
+const loadInboundAfter = async (cursor) => {
+  const rows = wakeDb
+    .prepare(
+      `SELECT
+         rowid as cursor,
+         conversation_id as conversationId,
+         msg_id as msgId,
+         sender as "from",
+         text,
+         created_at as ts
+       FROM local_messages
+       WHERE direction = 'inbound' AND rowid > ?
+       ORDER BY rowid ASC
+       LIMIT 100`,
+    )
+    .all(cursor);
+  return rows.map((row) => ({
+    from: row.from,
+    text: row.text,
+    msgId: row.msgId,
+    conversationId: row.conversationId,
+    ts: row.ts,
+    cursor: Number(row.cursor),
+  }));
+};
+
+const wakeMonitor = new WakeMonitor({
+  ...wakeConfig,
+  initialCursor: inboundCursor(),
+  loadBacklogAfter: loadInboundAfter,
+  hook: createShellHook({ command: config.onReceive, log }),
+  log,
+});
+
+const proxyWakeMonitor = new WakeMonitor({
+  ...wakeConfig,
+  initialCursor: inboundCursor(),
+  hook: createShellHook({ command: config.proxyOnReceive, log }),
+  log,
+});
 
 const stableEnvelopePayload = (envelope) => JSON.stringify({
   schemaVersion: envelope.schemaVersion,
@@ -160,6 +214,7 @@ const onMessage = async (envelope) => {
     msgId: envelope.msgId,
     conversationId: envelope.conversationId,
     ts: new Date().toISOString(),
+    cursor: inboundCursorForMsg(envelope.msgId),
   };
 
   if (openclawTargets.length > 0) {
@@ -179,22 +234,7 @@ const onMessage = async (envelope) => {
     });
   }
 
-  if (config.onReceive) {
-    try {
-      const env = {
-        ...process.env,
-        MURMUR_FROM: senderId,
-        MURMUR_TEXT: plaintext,
-        MURMUR_MSG_ID: envelope.msgId,
-        MURMUR_CONVERSATION_ID: envelope.conversationId,
-      };
-      execFile("sh", ["-c", config.onReceive], { env, timeout: 10_000 }, (err) => {
-        if (err) log("warn", "onReceive hook failed", { error: err.message });
-      });
-    } catch (err) {
-      log("warn", "onReceive hook error", { error: err.message });
-    }
-  }
+  await wakeMonitor.onInbound(payload);
 };
 
 let running = true;
@@ -251,25 +291,14 @@ try {
     const proxyOnMessage = async (envelope, plaintext) => {
       const senderId = envelope.senderAgentId || "unknown";
       log("info", "Proxy message received", { subject: ps, from: senderId, len: plaintext?.length });
-      // Run LLM handler for proxy agents
-      if (config.proxyOnReceive) {
-        try {
-          const env = {
-            ...process.env,
-            MURMUR_FROM: senderId,
-            MURMUR_TEXT: plaintext,
-            MURMUR_MSG_ID: envelope.msgId,
-            MURMUR_CONVERSATION_ID: envelope.conversationId,
-            MURMUR_PROXY_AGENT: ps.replace("msg.", ""),
-          };
-          execFile("sh", ["-c", config.proxyOnReceive], { env, timeout: 60_000 }, (err, stdout, stderr) => {
-            if (err) log("warn", "proxyOnReceive hook failed", { error: err.message, stderr: stderr?.slice(0,200) });
-            else log("info", "proxyOnReceive hook completed", { stdout: stdout?.slice(0,100) });
-          });
-        } catch (err) {
-          log("warn", "proxyOnReceive hook error", { error: err.message });
-        }
-      }
+      await proxyWakeMonitor.onInbound({
+        from: senderId,
+        text: plaintext ?? "",
+        msgId: envelope.msgId,
+        conversationId: envelope.conversationId,
+        ts: new Date().toISOString(),
+        env: { MURMUR_PROXY_AGENT: ps.replace("msg.", "") },
+      });
     };
     await broker.subscribeWithAck({ subject: ps, consumerId: `${agentId}-proxy`, dedupe: store, onMessage: proxyOnMessage });
     log("info", "Subscribed (proxy)", { subject: ps });
