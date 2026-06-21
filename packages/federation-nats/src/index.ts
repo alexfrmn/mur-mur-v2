@@ -23,9 +23,15 @@ export interface FederationAccountContract {
   imports: FederationImport[];
 }
 
+export interface FederationNatsPermissions {
+  publish: { allow: string[] };
+  subscribe: { allow: string[] };
+}
+
 export interface FederationNatsUser {
   user: string;
   password: string;
+  permissions?: FederationNatsPermissions;
 }
 
 export interface FederationNatsServiceExport {
@@ -49,6 +55,13 @@ export interface BuildFederationNatsAccountConfigOptions {
   partnerOrgs?: string[];
   users?: FederationNatsUser[];
   privateExports?: boolean;
+  /**
+   * Attach least-privilege pub/sub permissions to each user: publish only into
+   * imported partner namespaces (`fed.<partner>.>`), subscribe only on this org's
+   * own exported namespace (`fed.<self>.>`). Defense-in-depth for leaf users on top
+   * of account isolation (acceptance #2/#3 in docs/federation-nats-contract.md).
+   */
+  restrictUserPermissions?: boolean;
 }
 
 export interface RenderFederationNatsAccountsConfigOptions {
@@ -56,6 +69,7 @@ export interface RenderFederationNatsAccountsConfigOptions {
   port?: number | string;
   usersByOrg?: Record<string, FederationNatsUser[]>;
   privateExports?: boolean;
+  restrictUserPermissions?: boolean;
 }
 
 const FEDERATION_PREFIX = "fed";
@@ -164,17 +178,29 @@ export const buildFederationAccountContract = (
 
 const quoteNatsString = (value: string): string => JSON.stringify(value);
 
+const federationPrefixWildcard = (org: string): string =>
+  `${FEDERATION_PREFIX}.${encodeFederationToken(org)}.>`;
+
 export const buildFederationNatsAccountConfig = ({
   localOrg,
   partnerOrgs = [],
   users = [{ user: localOrg, password: `pw_${localOrg}` }],
   privateExports = true,
+  restrictUserPermissions = false,
 }: BuildFederationNatsAccountConfigOptions): FederationNatsAccountConfig => {
   const contract = buildFederationAccountContract(localOrg, partnerOrgs);
   const partnerAccounts = partnerOrgs.map(orgAccountName);
+  const permissions: FederationNatsPermissions | undefined = restrictUserPermissions
+    ? {
+        // Least privilege: send only into imported partner namespaces, receive only
+        // on this org's own exported namespace.
+        publish: { allow: partnerOrgs.map(federationPrefixWildcard) },
+        subscribe: { allow: [federationPrefixWildcard(localOrg)] },
+      }
+    : undefined;
   return {
     account: contract.localAccount,
-    users,
+    users: permissions ? users.map((u) => ({ ...u, permissions })) : users,
     exports: contract.exports.map((service) => ({
       service,
       ...(privateExports ? { accounts: partnerAccounts } : {}),
@@ -188,6 +214,7 @@ export const renderFederationNatsAccountsConfig = ({
   port = 14333,
   usersByOrg = {},
   privateExports = true,
+  restrictUserPermissions = false,
 }: RenderFederationNatsAccountsConfigOptions): string => {
   if (!Array.isArray(orgs) || orgs.length === 0) throw new Error("orgs-missing");
   const lines = [`port: ${port}`, "accounts {"];
@@ -198,11 +225,21 @@ export const renderFederationNatsAccountsConfig = ({
       partnerOrgs: partners,
       users: usersByOrg[org] ?? [{ user: org, password: `pw_${org}` }],
       privateExports,
+      restrictUserPermissions,
     });
     lines.push(`  ${account.account} {`);
     lines.push(`    users: [`);
     for (const user of account.users) {
-      lines.push(`      { user: ${quoteNatsString(user.user)}, password: ${quoteNatsString(user.password)} }`);
+      if (user.permissions) {
+        const pub = user.permissions.publish.allow.map(quoteNatsString).join(", ");
+        const sub = user.permissions.subscribe.allow.map(quoteNatsString).join(", ");
+        lines.push(`      {`);
+        lines.push(`        user: ${quoteNatsString(user.user)}, password: ${quoteNatsString(user.password)}`);
+        lines.push(`        permissions: { publish: { allow: [${pub}] }, subscribe: { allow: [${sub}] } }`);
+        lines.push(`      }`);
+      } else {
+        lines.push(`      { user: ${quoteNatsString(user.user)}, password: ${quoteNatsString(user.password)} }`);
+      }
     }
     lines.push(`    ]`);
     lines.push(`    exports: [`);

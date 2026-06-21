@@ -117,6 +117,22 @@ test("keeps private exports non-public even when an org has no configured partne
   assert.match(conf, /\{ service: "fed\.aimindset\.>", accounts: \[\] \}/);
 });
 
+test("restrictUserPermissions emits least-privilege pub/sub allow lists", () => {
+  const acct = buildFederationNatsAccountConfig({
+    localOrg: "aimindset",
+    partnerOrgs: ["partner"],
+    restrictUserPermissions: true,
+  });
+  assert.deepEqual(acct.users[0].permissions, {
+    publish: { allow: ["fed.partner.>"] },      // may publish only into imported partner namespaces
+    subscribe: { allow: ["fed.aimindset.>"] },  // may subscribe only on its own exported namespace
+  });
+  const conf = renderFederationNatsAccountsConfig({ orgs: ["aimindset", "partner"], restrictUserPermissions: true });
+  assert.match(conf, /permissions: \{ publish: \{ allow: \["fed\.partner\.>"\] \}, subscribe: \{ allow: \["fed\.aimindset\.>"\] \} \}/);
+  // default (no restriction) emits no permissions block
+  assert.ok(!renderFederationNatsAccountsConfig({ orgs: ["aimindset", "partner"] }).includes("permissions:"));
+});
+
 test("encoded federation tokens are reversible", () => {
   const token = encodeFederationToken("_xreserved.name");
   assert.equal(token, "_xX3hyZXNlcnZlZC5uYW1l");

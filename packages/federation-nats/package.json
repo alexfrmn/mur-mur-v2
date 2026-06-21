@@ -9,7 +9,8 @@
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test test/*.test.mjs",
     "test:fed-live": "npm run build && bash integration/run-fed-live.sh",
-    "test:real-mesh-leaf": "npm run build && bash integration/real-mesh-leaf.sh"
+    "test:real-mesh-leaf": "npm run build && bash integration/real-mesh-leaf.sh",
+    "test:perm-boundary": "npm run build && bash integration/run-perm-boundary.sh"
   },
   "dependencies": {
     "@murmurv2/core": "file:../core",
