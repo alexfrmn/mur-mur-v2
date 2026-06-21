@@ -34,6 +34,10 @@ try {
 const { agentId, natsUrl, natsToken, subject, peers, keys } = config;
 const dbPath = path.join(dataDir, "murmur.db");
 const flushIntervalMs = Number(process.env.FLUSH_INTERVAL_MS) || 2000;
+const jetstreamConfig = config.jetstream || {};
+const jetstreamEnabled = jetstreamConfig.enabled ?? process.env.MURMUR_JETSTREAM === "1";
+const jetstreamStream = jetstreamConfig.stream || process.env.MURMUR_JETSTREAM_STREAM || "MURMUR";
+const jetstreamSubjects = jetstreamConfig.subjects || ["msg.>", "ack.>"];
 const notifyTargets = normalizeNotifyTargets(config.notify);
 const envTelegramFallback = (() => {
   const botToken = process.env.MURMUR_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
@@ -53,13 +57,23 @@ log("info", "Daemon starting", {
   natsUrl,
   dbPath,
   flushIntervalMs,
+  jetstreamEnabled,
+  jetstreamStream: jetstreamEnabled ? jetstreamStream : undefined,
   notifyTargets: effectiveNotifyTargets.map((t) => `${t.type}:${t.channel}`),
   notifyFallbackFromEnv: envTelegramFallback.length > 0,
 });
 
 const store = new SQLiteDedupeOutboxStore(dbPath);
 const msgStore = new SQLiteMessageStore(dbPath);
-const broker = new NatsBroker({ url: natsUrl, token: natsToken });
+const broker = new NatsBroker({
+  url: natsUrl,
+  token: natsToken,
+  jetstream: jetstreamEnabled,
+  stream: jetstreamEnabled ? jetstreamStream : undefined,
+  streamSubjects: jetstreamSubjects,
+});
+
+const durableSafe = (value) => value.replace(/[^A-Za-z0-9_-]/g, "-");
 
 const inboundCursor = () => {
   const row = wakeDb.prepare("SELECT COALESCE(MAX(rowid), 0) as cursor FROM local_messages WHERE direction = 'inbound'").get();
@@ -261,11 +275,11 @@ try {
         env: { MURMUR_PROXY_AGENT: ps.replace("msg.", "") },
       });
     };
-    await broker.subscribeWithAck({ subject: ps, consumerId: `${agentId}-proxy`, dedupe: store, onMessage: proxyOnMessage });
+    await broker.subscribeWithAck({ subject: ps, consumerId: `${agentId}-proxy-${durableSafe(ps)}`, dedupe: store, onMessage: proxyOnMessage });
     log("info", "Subscribed (proxy)", { subject: ps });
   }
 
-  await broker.startAckCorrelation({ outbox: store, ackSubject: `ack.${agentId}` });
+  await broker.startAckCorrelation({ outbox: store, ackSubject: `ack.${agentId}`, consumerId: `${agentId}-ack` });
   log("info", "ACK correlation started", { ackSubject: `ack.${agentId}` });
 
   const pendingNotify = notifyQueue.pendingCount();
