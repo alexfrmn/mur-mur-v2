@@ -18,9 +18,10 @@ const envelope = {
   signature: "sig",
 };
 
-const makeJetStreamBroker = ({ streamInfoThrows = true, messages = [] } = {}) => {
+const makeJetStreamBroker = ({ streamInfoThrows = true, consumerInfo, messages = [], brokerConfig = {} } = {}) => {
   const streamsAdded = [];
   const consumersAdded = [];
+  const consumersUpdated = [];
   const published = [];
   const acked = [];
   const nacked = [];
@@ -57,10 +58,14 @@ const makeJetStreamBroker = ({ streamInfoThrows = true, messages = [] } = {}) =>
     },
     consumers: {
       async info() {
+        if (consumerInfo) return consumerInfo;
         throw new Error("consumer-missing");
       },
       async add(stream, config) {
         consumersAdded.push({ stream, config });
+      },
+      async update(stream, durable, config) {
+        consumersUpdated.push({ stream, durable, config });
       },
     },
   };
@@ -97,10 +102,11 @@ const makeJetStreamBroker = ({ streamInfoThrows = true, messages = [] } = {}) =>
     jetstream: true,
     stream: "MURMUR",
     streamSubjects: ["msg.>", "ack.>"],
+    ...brokerConfig,
   });
   broker.nc = fakeNc;
 
-  return { broker, streamsAdded, consumersAdded, published, acked, nacked };
+  return { broker, streamsAdded, consumersAdded, consumersUpdated, published, acked, nacked };
 };
 
 test("JetStream publish ensures stream and uses envelope msgId as dedupe id", async () => {
@@ -156,10 +162,125 @@ test("JetStream subscribeWithAck creates durable explicit-ack consumer", async (
   assert.equal(consumersAdded[0].config.durable_name, "agent-receiver");
   assert.equal(consumersAdded[0].config.filter_subject, "msg.agent-receiver");
   assert.equal(consumersAdded[0].config.ack_policy, "explicit");
+  assert.equal(consumersAdded[0].config.max_deliver, 5);
+  assert.equal(consumersAdded[0].config.ack_wait, 30_000_000_000);
   assert.equal(published[0].subject, "ack.agent-sender");
   assert.equal(published[0].body.status, "ack");
   assert.equal(published[0].opts.msgID, `ack:${envelope.msgId}:agent-receiver:ack`);
   assert.equal(acked.length, 1);
+});
+
+test("JetStream consumer delivery limits are configurable", async () => {
+  const { broker, consumersAdded } = makeJetStreamBroker({
+    brokerConfig: {
+      jetstreamMaxDeliver: 2,
+      jetstreamAckWaitMs: 750,
+    },
+  });
+  const dedupe = {
+    async seen() { return false; },
+    async markSeen() {},
+  };
+
+  await broker.subscribeWithAck({
+    subject: "msg.agent-receiver",
+    consumerId: "agent-receiver",
+    dedupe,
+    onMessage: async () => {},
+  });
+
+  assert.equal(consumersAdded[0].config.max_deliver, 2);
+  assert.equal(consumersAdded[0].config.ack_wait, 750_000_000);
+});
+
+test("JetStream existing durable consumer is repaired when delivery limits drift", async () => {
+  const { broker, consumersAdded, consumersUpdated } = makeJetStreamBroker({
+    consumerInfo: {
+      config: {
+        durable_name: "agent-receiver",
+        filter_subject: "msg.agent-receiver",
+        max_deliver: -1,
+        ack_wait: 30_000_000_000,
+      },
+    },
+  });
+  const dedupe = {
+    async seen() { return false; },
+    async markSeen() {},
+  };
+
+  await broker.subscribeWithAck({
+    subject: "msg.agent-receiver",
+    consumerId: "agent-receiver",
+    dedupe,
+    onMessage: async () => {},
+  });
+
+  assert.equal(consumersAdded.length, 0);
+  assert.deepEqual(consumersUpdated, [{
+    stream: "MURMUR",
+    durable: "agent-receiver",
+    config: {
+      max_deliver: 5,
+      ack_wait: 30_000_000_000,
+    },
+  }]);
+});
+
+test("JetStream retryable handler failures are nacked for redelivery", async () => {
+  const { broker, published, acked, nacked } = makeJetStreamBroker({
+    messages: [sc.encode(JSON.stringify(envelope))],
+  });
+  const dedupe = {
+    async seen() { return false; },
+    async markSeen() {},
+  };
+
+  await broker.subscribeWithAck({
+    subject: "msg.agent-receiver",
+    consumerId: "agent-receiver",
+    dedupe,
+    maxPoisonAttempts: 99,
+    onMessage: async () => {
+      throw new Error("handler-down");
+    },
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.equal(acked.length, 0);
+  assert.equal(nacked.length, 1);
+  assert.equal(published[0].subject, "ack.agent-sender");
+  assert.equal(published[0].body.status, "nack");
+  assert.equal(published[0].body.reason, "handler-down");
+});
+
+test("JetStream poison-message terminal failure is acked", async () => {
+  const { broker, published, acked, nacked } = makeJetStreamBroker({
+    messages: [sc.encode(JSON.stringify(envelope))],
+  });
+  const dedupe = {
+    async seen() { return false; },
+    async markSeen() {},
+  };
+
+  await broker.subscribeWithAck({
+    subject: "msg.agent-receiver",
+    consumerId: "agent-receiver",
+    dedupe,
+    maxPoisonAttempts: 1,
+    onMessage: async () => {
+      throw new Error("bad-payload");
+    },
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.equal(acked.length, 1);
+  assert.equal(nacked.length, 0);
+  assert.equal(published[0].subject, "ack.agent-sender");
+  assert.equal(published[0].body.status, "nack");
+  assert.equal(published[0].body.reason, "poison-message:bad-payload");
 });
 
 test("JetStream ACK correlation consumes durable ack subject and updates outbox", async () => {
