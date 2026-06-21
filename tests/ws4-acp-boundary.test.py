@@ -57,6 +57,8 @@ def test_task_packet_contract() -> None:
     assert_eq(packet["source"], "murmur", "packet source")
     assert_eq(packet["murmur"]["msg_id"], "msg-123", "packet msg_id")
     assert_eq(packet["reply"]["send_boundary"], "murmur-send-service", "send boundary")
+    assert_eq(packet["reply"]["client"], "murmur-send-boundary.py", "send boundary client")
+    assert "murmur-send-boundary.py" in packet["reply"]["command"]
     assert "write_proof_pack" in packet["requirements"]
     assert "reply_via_send_boundary" in packet["coverage"]
 

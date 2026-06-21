@@ -75,6 +75,12 @@ def task_body(sender: str, conversation_id: str, msg_id: str, rowid: str, create
             "to": sender,
             "conversation_id": conversation_id,
             "send_boundary": "murmur-send-service",
+            "client": "murmur-send-boundary.py",
+            "command": (
+                "python3 /opt/lifecoach/mur-mur-v2/scripts/murmur-send-boundary.py "
+                f"--to {sender} --conversation-id {conversation_id} "
+                "--kind final --source-task-id <ACP_TASK_ID> --summary '<summary>'"
+            ),
         },
         "prompt": text,
         "requirements": ["create_or_get_task", "write_result", "write_proof_pack", "reply_via_send_boundary"],
