@@ -1,8 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/alexfrmn/mur-mur-v2/schema/protocol-v1.schema.json",
-  "title": "Murmur V2 Protocol v1",
-  "description": "Machine-readable schema for the Murmur V2 wire protocol (schemaVersion 1.0). Mirrors the runtime guard isEnvelopeV1 in @murmurv2/core. Unknown top-level fields are permitted for forward compatibility (consumers ignore them).",
+  "title": "Murmur V2 Protocol v1 — EnvelopeV1 (canonical inbound-envelope schema)",
+  "description": "Machine-readable schema for the Murmur V2 wire protocol (schemaVersion 1.0). The document ROOT validates an EnvelopeV1 (the canonical inbound-message target), via $ref to #/$defs/EnvelopeV1. Validate ACKs against #/$defs/AckV1. Mirrors the runtime guard isEnvelopeV1 in @murmurv2/core. Unknown top-level fields are permitted for forward compatibility (consumers ignore them).",
+  "$ref": "#/$defs/EnvelopeV1",
   "$defs": {
     "EnvelopeV1": {
       "type": "object",

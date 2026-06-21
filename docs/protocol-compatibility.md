@@ -56,8 +56,21 @@ guard `isEnvelopeV1` in `@murmurv2/core` mirrors it, and the conformance suite
 | `at` | ✅ | string | ISO-8601 date-time |
 | `reason` | — | string | |
 
+## Entrypoints
+
+`protocol-v1.schema.json` is a single file with two validation targets:
+
+| Validate | Entrypoint |
+|----------|------------|
+| an inbound **envelope** | the document **root** (it `$ref`s `#/$defs/EnvelopeV1`) — so validating against the file directly is correct |
+| an **ack** | `#/$defs/AckV1` |
+
+There is one canonical machine-readable schema (`packages/core/schema/protocol-v1.schema.json`);
+no other EnvelopeV1/AckV1 JSON schemas exist in the repo.
+
 ## For third-party implementations
 
-Validate inbound envelopes against `protocol-v1.schema.json` and reject on failure.
-The conformance suite is the reference behaviour for accept/reject decisions; run it
-(or port its fixtures) to check an independent implementation against this contract.
+Validate inbound envelopes against `protocol-v1.schema.json` (the root) and reject on
+failure; validate acks against its `#/$defs/AckV1`. The conformance suite is the
+reference behaviour for accept/reject decisions; run it (or port its fixtures) to check
+an independent implementation against this contract.

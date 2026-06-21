@@ -14,6 +14,10 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const schema = JSON.parse(readFileSync(path.join(here, "..", "schema", "protocol-v1.schema.json"), "utf8"));
 
 function validate(def, value, p = "$") {
+  if (def.$ref) {
+    const name = def.$ref.replace("#/$defs/", "");
+    return validate(schema.$defs[name], value, `${p}->${name}`);
+  }
   const errs = [];
   if ("const" in def) {
     if (value !== def.const) errs.push(`${p}: const`);
@@ -52,6 +56,9 @@ function validate(def, value, p = "$") {
 }
 const envelopeOk = (v) => validate(schema.$defs.EnvelopeV1, v).length === 0;
 const ackOk = (v) => validate(schema.$defs.AckV1, v).length === 0;
+// Validate against the document ROOT (which $refs EnvelopeV1) — the entrypoint a
+// third party uses when validating "against protocol-v1.schema.json".
+const rootOk = (v) => validate(schema, v).length === 0;
 
 const GOOD = Object.freeze({
   schemaVersion: "1.0",
@@ -70,6 +77,17 @@ test("schema bundle is a valid Draft 2020-12 $defs registry", () => {
   assert.equal(schema.$schema, "https://json-schema.org/draft/2020-12/schema");
   assert.ok(schema.$defs?.EnvelopeV1 && schema.$defs?.AckV1);
   assert.equal(schema.$defs.EnvelopeV1.properties.schemaVersion.const, "1.0");
+});
+
+test("schema ROOT validates an EnvelopeV1 and rejects non-envelopes", () => {
+  // The root has a real validation target ($ref EnvelopeV1) — without it a validator
+  // run against the file root would accept arbitrary input (the bug this guards).
+  assert.equal(schema.$ref, "#/$defs/EnvelopeV1");
+  assert.equal(rootOk(GOOD), true);
+  assert.equal(rootOk({}), false);
+  assert.equal(rootOk({ hello: "world" }), false);
+  // an AckV1 is NOT an EnvelopeV1 — the root rejects it (acks validate via #/$defs/AckV1)
+  assert.equal(rootOk({ msgId: "m", consumerId: "c", status: "ack", at: "2026-06-21T00:00:00Z" }), false);
 });
 
 test("a conformant EnvelopeV1 passes BOTH the schema and isEnvelopeV1", () => {
