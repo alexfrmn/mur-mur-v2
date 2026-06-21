@@ -1,11 +1,9 @@
 import type { EnvelopeV1 } from "@murmurv2/core";
+import { parseAddress, type AgentAddress } from "@murmurv2/federation";
 
 export type FederationSubjectKind = "msg" | "ack";
 
-export interface FederationAddress {
-  org: string;
-  agentId: string;
-}
+export type FederationAddress = AgentAddress;
 
 export interface FederatedRoute<TEnvelope extends EnvelopeV1 = EnvelopeV1> {
   subject: string;
@@ -55,19 +53,7 @@ export const decodeFederationToken = (token: string): string => {
 };
 
 export const parseFederationAddress = (raw: string, localOrg: string): FederationAddress => {
-  assertAddressPart("local-org", localOrg);
-  const parts = raw.split("/");
-  if (parts.length === 1) {
-    return {
-      org: localOrg,
-      agentId: assertAddressPart("agent-id", parts[0] ?? ""),
-    };
-  }
-  if (parts.length !== 2) throw new Error("federation-address-invalid");
-  return {
-    org: assertAddressPart("org", parts[0] ?? ""),
-    agentId: assertAddressPart("agent-id", parts[1] ?? ""),
-  };
+  return parseAddress(raw, localOrg);
 };
 
 export const formatFederationAddress = (address: FederationAddress): string => {

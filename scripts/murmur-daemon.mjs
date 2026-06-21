@@ -11,6 +11,7 @@ import { SQLiteDedupeOutboxStore, SQLiteMessageStore } from "@murmurv2/core";
 import { decryptPayload, verifyEnvelopeSignature } from "@murmurv2/security";
 import { NotifyQueue, flushNotifyQueue, normalizeNotifyTargets } from "./notify-router.mjs";
 import { createCodexAppServerInjector } from "./codex-app-server-wake.mjs";
+import { startJetStreamAdvisoryDlqIfEnabled } from "./murmur-jetstream-advisory.mjs";
 import { WakeMonitor, createAuditShellHook, createShellHook, normalizeWakeConfig } from "./wake-monitor.mjs";
 // vault-guard: optional content policy hook (not included in OSS release)
 
@@ -281,6 +282,12 @@ try {
 
   await broker.startAckCorrelation({ outbox: store, ackSubject: `ack.${agentId}`, consumerId: `${agentId}-ack` });
   log("info", "ACK correlation started", { ackSubject: `ack.${agentId}` });
+  await startJetStreamAdvisoryDlqIfEnabled({
+    broker,
+    outbox: store,
+    jetstreamEnabled,
+    log,
+  });
 
   const pendingNotify = notifyQueue.pendingCount();
   if (pendingNotify > 0) {
