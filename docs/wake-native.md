@@ -103,6 +103,15 @@ Native wake modes are `stateless` shell hooks and `codex_app_server`.
 
 ### Codex Autostart Sequence
 
+> **Diagnostic / opt-in only.** This sequence only covers
+> app-server-managed Codex sessions launched with `--remote`. It is not a
+> community-grade native wake solution: plain `codex` and desktop-launched Codex
+> sessions are not covered because Codex app-server instances are isolated per
+> client and currently do not talk to each other. Keep issue #25 open for the
+> real product goal. The strategic community-grade path is MCP-channel wake:
+> MCP custom notification -> active-session user submission through a supported
+> `[mcp_servers]` configuration surface.
+
 Autostart belongs in the Codex launcher wrapper, not in the Murmur daemon. The
 launcher owns the live TUI process and is the only layer that can know which
 session thread was just attached.
