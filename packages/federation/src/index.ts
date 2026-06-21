@@ -128,12 +128,13 @@ export async function signRoster(
 }
 
 /**
- * Verify a signed roster against its embedded signingPublicKey. The caller MUST
- * have pinned/trusted that key for `roster.org` out-of-band (e.g. partner key
- * exchange) — this only proves the roster was signed by whoever holds it.
+ * Verify a signed roster against the caller's pinned/trusted org key.
+ * The embedded signingPublicKey is transport metadata only; accepting it as the
+ * trust root would let an attacker publish a forged roster signed by themselves.
  */
-export async function verifyRoster(roster: SignedRoster): Promise<boolean> {
-  if (!roster || !roster.signature || !roster.signingPublicKey) return false;
+export async function verifyRoster(roster: SignedRoster, expectedSigningPublicKey: string): Promise<boolean> {
+  if (!roster || !roster.signature || !roster.signingPublicKey || !expectedSigningPublicKey) return false;
+  if (roster.signingPublicKey !== expectedSigningPublicKey) return false;
   const body: RosterBody = {
     org: roster.org,
     version: roster.version,
@@ -141,7 +142,7 @@ export async function verifyRoster(roster: SignedRoster): Promise<boolean> {
     agents: roster.agents,
   };
   try {
-    return await verifyEnvelopeSignature(canonicalRoster(body), roster.signature, roster.signingPublicKey);
+    return await verifyEnvelopeSignature(canonicalRoster(body), roster.signature, expectedSigningPublicKey);
   } catch {
     return false;
   }

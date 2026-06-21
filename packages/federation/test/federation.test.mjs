@@ -61,13 +61,13 @@ async function buildRoster(org = "aimindset") {
 }
 
 test("signRoster -> verifyRoster round-trips", async () => {
-  const { roster } = await buildRoster();
+  const { roster, sign } = await buildRoster();
   assert.ok(roster.signature.length > 0);
-  assert.equal(await verifyRoster(roster), true);
+  assert.equal(await verifyRoster(roster, sign.publicKey), true);
 });
 
 test("verifyRoster fails on tampered keys (sig covers the body)", async () => {
-  const { roster } = await buildRoster();
+  const { roster, sign } = await buildRoster();
   const forged = await createKeyPair();
   const tampered = {
     ...roster,
@@ -78,13 +78,35 @@ test("verifyRoster fails on tampered keys (sig covers the body)", async () => {
       },
     },
   };
-  assert.equal(await verifyRoster(tampered), false);
+  assert.equal(await verifyRoster(tampered, sign.publicKey), false);
 });
 
-test("verifyRoster fails when signed by a different org key", async () => {
-  const { roster } = await buildRoster();
+test("verifyRoster fails when embedded key differs from pinned org key", async () => {
+  const { roster, sign } = await buildRoster();
   const attacker = await createSigningKeyPair();
-  assert.equal(await verifyRoster({ ...roster, signingPublicKey: attacker.publicKey }), false);
+  assert.equal(await verifyRoster({ ...roster, signingPublicKey: attacker.publicKey }, sign.publicKey), false);
+});
+
+test("verifyRoster rejects a forged roster signed by the attacker's embedded key", async () => {
+  const { sign, jarvisEnc, jarvisSig } = await buildRoster();
+  const attacker = await createSigningKeyPair();
+  const forged = await signRoster(
+    {
+      org: "aimindset",
+      version: 2,
+      issuedAt: "2026-06-21T18:05:00.000Z",
+      agents: {
+        "agent-jarvis": {
+          encryptPublicKey: jarvisEnc.publicKey,
+          verifyPublicKey: jarvisSig.publicKey,
+        },
+      },
+    },
+    attacker.privateKey,
+    attacker.publicKey,
+  );
+
+  assert.equal(await verifyRoster(forged, sign.publicKey), false);
 });
 
 test("canonicalRoster is insertion-order independent", () => {
