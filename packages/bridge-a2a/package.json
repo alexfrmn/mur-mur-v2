@@ -7,7 +7,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test",
-    "test:live": "npm run build && bash integration/run-live.sh"
+    "test:live": "npm run build && bash integration/run-live.sh",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@a2a-js/sdk": "1.0.0-alpha.0",
@@ -29,7 +30,8 @@
     "access": "public"
   },
   "files": [
-    "dist",
+    "dist/src",
     "LICENSE"
-  ]
+  ],
+  "description": "Murmur V2 to A2A protocol bridge (alpha) — terminates @a2a-js/sdk and re-wraps tasks as E2E Murmur envelopes."
 }

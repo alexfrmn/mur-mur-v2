@@ -6,7 +6,8 @@
   "types": "dist/src/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test"
+    "test": "npm run build && node --test",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@murmurv2/security": "^0.1.0"
@@ -21,7 +22,8 @@
     "access": "public"
   },
   "files": [
-    "dist",
+    "dist/src",
     "LICENSE"
-  ]
+  ],
+  "description": "Murmur V2 federation — org/agent addressing, Ed25519 signed roster + RosterStore, roster-backed auth tokens."
 }

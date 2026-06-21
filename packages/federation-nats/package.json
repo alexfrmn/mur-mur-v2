@@ -9,7 +9,8 @@
     "test": "npm run build && node --test test/*.test.mjs",
     "test:fed-live": "npm run build && bash integration/run-fed-live.sh",
     "test:real-mesh-leaf": "npm run build && bash integration/real-mesh-leaf.sh",
-    "test:perm-boundary": "npm run build && bash integration/run-perm-boundary.sh"
+    "test:perm-boundary": "npm run build && bash integration/run-perm-boundary.sh",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@murmurv2/core": "^0.1.0",
@@ -29,7 +30,8 @@
     "access": "public"
   },
   "files": [
-    "dist",
+    "dist/src",
     "LICENSE"
-  ]
+  ],
+  "description": "Murmur V2 federation NATS contract — fed.* subjects + account-config renderer for cross-org leaf-node meshes."
 }
