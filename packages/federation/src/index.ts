@@ -234,3 +234,210 @@ export class RosterStore {
     return lookupAgentKeys(roster, agentId);
   }
 }
+
+// ──────────────────── Auth token (roster-backed authn/authz) ────────────────────
+
+export interface AuthTokenClaims {
+  /** Agent that signs the token; its Ed25519 verify key MUST come from RosterStore. */
+  issuer: AgentAddress;
+  /** Intended recipient/service of the token. */
+  audience: AgentAddress;
+  /** Permission strings such as `murmur:send` or `murmur:reply`. */
+  scopes: string[];
+  /** ISO timestamp. Tokens are not accepted before this time. */
+  issuedAt: string;
+  /** ISO timestamp. Tokens expire at or after this time. */
+  expiresAt: string;
+  /** Optional caller-provided nonce/jti for replay caches outside this pure helper. */
+  nonce?: string;
+}
+
+export interface SignedAuthToken extends AuthTokenClaims {
+  /** Ed25519 signature over canonicalAuthTokenClaims(claims). */
+  signature: string;
+}
+
+export type AuthTokenRejectReason =
+  | "malformed"
+  | "issuer-not-found"
+  | "signature-invalid"
+  | "not-yet-valid"
+  | "expired"
+  | "audience-mismatch"
+  | "scope-missing";
+
+export interface AuthTokenVerifyOptions {
+  now?: Date | string | number;
+  audience?: AgentAddress;
+  requiredScopes?: string[];
+}
+
+export interface AuthTokenVerifyResult {
+  accepted: boolean;
+  reason?: AuthTokenRejectReason;
+}
+
+export const AUTH_TOKEN_PREFIX = "MURMUR-AUTH:";
+
+const SCOPE_RE = /^[A-Za-z0-9:._/-]+$/;
+
+function validDateMs(value: string, label: string): number {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`federation: invalid ${label}`);
+  }
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) throw new Error(`federation: invalid ${label}`);
+  return ms;
+}
+
+function normalizeScopes(scopes: string[]): string[] {
+  if (!Array.isArray(scopes) || scopes.length === 0) {
+    throw new Error("federation: auth token must carry at least one scope");
+  }
+  const uniq = new Set<string>();
+  for (const scope of scopes) {
+    if (typeof scope !== "string" || !SCOPE_RE.test(scope)) {
+      throw new Error(`federation: invalid auth scope: ${JSON.stringify(scope)}`);
+    }
+    uniq.add(scope);
+  }
+  return [...uniq].sort();
+}
+
+function normalizeAuthClaims(claims: AuthTokenClaims): AuthTokenClaims {
+  if (!claims || typeof claims !== "object") throw new Error("federation: invalid auth token claims");
+  const issuedAtMs = validDateMs(claims.issuedAt, "issuedAt");
+  const expiresAtMs = validDateMs(claims.expiresAt, "expiresAt");
+  if (expiresAtMs <= issuedAtMs) throw new Error("federation: expiresAt must be after issuedAt");
+  const nonce = claims.nonce;
+  if (nonce !== undefined && (typeof nonce !== "string" || nonce.length === 0)) {
+    throw new Error("federation: invalid nonce");
+  }
+  return {
+    issuer: parseAddress(formatAddress(claims.issuer), claims.issuer.org),
+    audience: parseAddress(formatAddress(claims.audience), claims.audience.org),
+    scopes: normalizeScopes(claims.scopes),
+    issuedAt: claims.issuedAt,
+    expiresAt: claims.expiresAt,
+    ...(nonce !== undefined ? { nonce } : {}),
+  };
+}
+
+/**
+ * Canonical auth-token signing input. Scopes are sorted/deduped so permission order
+ * does not affect signatures; issuer/audience are canonical `org/agentId` strings.
+ */
+export function canonicalAuthTokenClaims(claims: AuthTokenClaims): string {
+  const normalized = normalizeAuthClaims(claims);
+  return JSON.stringify({
+    issuer: formatAddress(normalized.issuer),
+    audience: formatAddress(normalized.audience),
+    scopes: normalized.scopes,
+    issuedAt: normalized.issuedAt,
+    expiresAt: normalized.expiresAt,
+    ...(normalized.nonce !== undefined ? { nonce: normalized.nonce } : {}),
+  });
+}
+
+/** Sign an auth token with the issuer agent's Ed25519 private key. */
+export async function signAuthToken(
+  claims: AuthTokenClaims,
+  issuerSigningPrivateKey: string,
+): Promise<SignedAuthToken> {
+  const normalized = normalizeAuthClaims(claims);
+  const signature = await signEnvelope(canonicalAuthTokenClaims(normalized), issuerSigningPrivateKey);
+  return { ...normalized, signature };
+}
+
+function normalizeSignedAuthToken(token: SignedAuthToken): SignedAuthToken {
+  const normalized = normalizeAuthClaims(token);
+  if (typeof token.signature !== "string" || token.signature.length === 0) {
+    throw new Error("federation: invalid auth token signature");
+  }
+  return { ...normalized, signature: token.signature };
+}
+
+/** Encode a signed auth token as a bearer-safe string. */
+export function encodeAuthToken(token: SignedAuthToken): string {
+  const normalized = normalizeSignedAuthToken(token);
+  return `${AUTH_TOKEN_PREFIX}${Buffer.from(JSON.stringify(normalized), "utf8").toString("base64url")}`;
+}
+
+/** Decode a bearer-safe auth token string. Signature validity is checked by verifyAuthToken(). */
+export function decodeAuthToken(encoded: string): SignedAuthToken {
+  if (typeof encoded !== "string" || !encoded.startsWith(AUTH_TOKEN_PREFIX)) {
+    throw new Error("federation: invalid auth token");
+  }
+  try {
+    const raw = Buffer.from(encoded.slice(AUTH_TOKEN_PREFIX.length), "base64url").toString("utf8");
+    return normalizeSignedAuthToken(JSON.parse(raw));
+  } catch (err) {
+    throw new Error("federation: invalid auth token", { cause: err });
+  }
+}
+
+function optionTimeMs(now: Date | string | number | undefined): number {
+  if (now === undefined) return Date.now();
+  if (now instanceof Date) return now.getTime();
+  if (typeof now === "number") return now;
+  const ms = Date.parse(now);
+  if (!Number.isFinite(ms)) throw new Error("federation: invalid now");
+  return ms;
+}
+
+/**
+ * Verify a signed auth token against RosterStore. The token contains no trust root:
+ * the issuer's verify key is resolved from the latest accepted roster.
+ */
+export async function verifyAuthToken(
+  token: SignedAuthToken,
+  rosters: RosterStore,
+  options: AuthTokenVerifyOptions = {},
+): Promise<AuthTokenVerifyResult> {
+  let normalized: AuthTokenClaims;
+  let issuedAtMs: number;
+  let expiresAtMs: number;
+  let nowMs: number;
+  try {
+    normalized = normalizeAuthClaims(token);
+    issuedAtMs = validDateMs(normalized.issuedAt, "issuedAt");
+    expiresAtMs = validDateMs(normalized.expiresAt, "expiresAt");
+    nowMs = optionTimeMs(options.now);
+  } catch {
+    return { accepted: false, reason: "malformed" };
+  }
+
+  let verifyPublicKey: string;
+  try {
+    verifyPublicKey = rosters.agentKeys(normalized.issuer.org, normalized.issuer.agentId).verifyPublicKey;
+  } catch {
+    return { accepted: false, reason: "issuer-not-found" };
+  }
+
+  let signatureOk = false;
+  try {
+    signatureOk =
+      typeof token.signature === "string" &&
+      (await verifyEnvelopeSignature(canonicalAuthTokenClaims(normalized), token.signature, verifyPublicKey));
+  } catch {
+    signatureOk = false;
+  }
+  if (!signatureOk) {
+    return { accepted: false, reason: "signature-invalid" };
+  }
+  if (nowMs < issuedAtMs) return { accepted: false, reason: "not-yet-valid" };
+  if (nowMs >= expiresAtMs) return { accepted: false, reason: "expired" };
+
+  if (options.audience && formatAddress(options.audience) !== formatAddress(normalized.audience)) {
+    return { accepted: false, reason: "audience-mismatch" };
+  }
+
+  if (options.requiredScopes?.length) {
+    const granted = new Set(normalized.scopes);
+    for (const scope of normalizeScopes(options.requiredScopes)) {
+      if (!granted.has(scope)) return { accepted: false, reason: "scope-missing" };
+    }
+  }
+
+  return { accepted: true };
+}

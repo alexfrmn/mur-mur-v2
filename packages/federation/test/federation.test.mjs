@@ -2,13 +2,18 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createKeyPair, createSigningKeyPair, signEnvelope } from "../../security/dist/src/index.js";
 import {
+  canonicalAuthTokenClaims,
   canonicalRoster,
+  decodeAuthToken,
+  encodeAuthToken,
   formatAddress,
   isLocal,
   lookupAgentKeys,
   parseAddress,
   RosterStore,
+  signAuthToken,
   signRoster,
+  verifyAuthToken,
   verifyRoster,
 } from "../dist/src/index.js";
 
@@ -237,4 +242,119 @@ test("RosterStore: re-pinning the same key preserves accepted state", async () =
   store.pin("partner", sign.publicKey); // same key -> no epoch reset
   assert.equal(store.current("partner").version, 5);
   assert.deepEqual(await store.offer(await makeRoster("partner", 5, sign, ak)), { accepted: false, reason: "stale-or-replay" });
+});
+
+// ─── Auth token (roster-backed identity + authz) ───
+
+async function authStoreWithIssuer() {
+  const orgSign = await createSigningKeyPair();
+  const issuerEnc = await createKeyPair();
+  const issuerSig = await createSigningKeyPair();
+  const roster = await signRoster(
+    {
+      org: "aimindset",
+      version: 1,
+      issuedAt: "2026-06-21T00:00:00Z",
+      agents: {
+        "agent-jarvis": {
+          encryptPublicKey: issuerEnc.publicKey,
+          verifyPublicKey: issuerSig.publicKey,
+        },
+      },
+    },
+    orgSign.privateKey,
+    orgSign.publicKey,
+  );
+  const store = new RosterStore({ aimindset: orgSign.publicKey });
+  assert.deepEqual(await store.offer(roster), { accepted: true });
+  return { store, issuerSig };
+}
+
+function authClaims(overrides = {}) {
+  return {
+    issuer: { org: "aimindset", agentId: "agent-jarvis" },
+    audience: { org: "partner", agentId: "agent-codex" },
+    scopes: ["murmur:send", "murmur:reply"],
+    issuedAt: "2026-06-21T10:00:00.000Z",
+    expiresAt: "2026-06-21T11:00:00.000Z",
+    nonce: "nonce-1",
+    ...overrides,
+  };
+}
+
+test("AuthToken: signs and verifies against issuer key from accepted roster", async () => {
+  const { store, issuerSig } = await authStoreWithIssuer();
+  const token = await signAuthToken(authClaims(), issuerSig.privateKey);
+  assert.deepEqual(
+    await verifyAuthToken(token, store, {
+      now: "2026-06-21T10:30:00.000Z",
+      audience: { org: "partner", agentId: "agent-codex" },
+      requiredScopes: ["murmur:send"],
+    }),
+    { accepted: true },
+  );
+});
+
+test("AuthToken: encodes/decodes a bearer token string", async () => {
+  const { store, issuerSig } = await authStoreWithIssuer();
+  const token = await signAuthToken(authClaims(), issuerSig.privateKey);
+  const encoded = encodeAuthToken(token);
+  assert.match(encoded, /^MURMUR-AUTH:/);
+  const decoded = decodeAuthToken(encoded);
+  assert.deepEqual(decoded, token);
+  assert.deepEqual(await verifyAuthToken(decoded, store, { now: "2026-06-21T10:30:00.000Z" }), {
+    accepted: true,
+  });
+  assert.throws(() => decodeAuthToken("not-a-token"), /invalid auth token/);
+});
+
+test("AuthToken: canonical claims are scope-order independent", () => {
+  assert.equal(
+    canonicalAuthTokenClaims(authClaims({ scopes: ["murmur:reply", "murmur:send"] })),
+    canonicalAuthTokenClaims(authClaims({ scopes: ["murmur:send", "murmur:reply"] })),
+  );
+});
+
+test("AuthToken: rejects tampered claims, unknown issuer, audience mismatch, missing scope, and expiry", async () => {
+  const { store, issuerSig } = await authStoreWithIssuer();
+  const token = await signAuthToken(authClaims(), issuerSig.privateKey);
+  assert.deepEqual(
+    await verifyAuthToken({ ...token, scopes: ["murmur:admin"] }, store, { now: "2026-06-21T10:30:00.000Z" }),
+    { accepted: false, reason: "signature-invalid" },
+  );
+  assert.deepEqual(
+    await verifyAuthToken({ ...token, signature: "not-base64" }, store, { now: "2026-06-21T10:30:00.000Z" }),
+    { accepted: false, reason: "signature-invalid" },
+  );
+  assert.deepEqual(
+    await verifyAuthToken({ ...token, issuer: { org: "aimindset", agentId: "ghost" } }, store, { now: "2026-06-21T10:30:00.000Z" }),
+    { accepted: false, reason: "issuer-not-found" },
+  );
+  assert.deepEqual(
+    await verifyAuthToken(token, store, {
+      now: "2026-06-21T10:30:00.000Z",
+      audience: { org: "other", agentId: "agent-codex" },
+    }),
+    { accepted: false, reason: "audience-mismatch" },
+  );
+  assert.deepEqual(
+    await verifyAuthToken(token, store, { now: "2026-06-21T10:30:00.000Z", requiredScopes: ["murmur:admin"] }),
+    { accepted: false, reason: "scope-missing" },
+  );
+  assert.deepEqual(
+    await verifyAuthToken(token, store, { now: "2026-06-21T11:00:01.000Z" }),
+    { accepted: false, reason: "expired" },
+  );
+});
+
+test("AuthToken: rejects malformed token timestamps and empty scopes before signing", async () => {
+  const { issuerSig } = await authStoreWithIssuer();
+  await assert.rejects(
+    () => signAuthToken(authClaims({ scopes: [] }), issuerSig.privateKey),
+    /at least one scope/,
+  );
+  await assert.rejects(
+    () => signAuthToken(authClaims({ expiresAt: "not-a-date" }), issuerSig.privateKey),
+    /invalid expiresAt/,
+  );
 });
