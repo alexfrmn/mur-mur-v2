@@ -313,7 +313,7 @@ Murmur V2 wakes agents through native runtime mechanisms instead of tmux or
 OpenClaw:
 
 - Claude Code: `asyncRewake` hook via `scripts/wake-drain-claude.sh`.
-- Codex CLI: app-server Unix socket JSON-RPC `turn/start` via
+- Codex CLI: app-server WS-over-UDS `turn/start` via
   `scripts/codex-app-server-wake.mjs`.
 - Human notification remains on Telegram/webhook notify queues.
 

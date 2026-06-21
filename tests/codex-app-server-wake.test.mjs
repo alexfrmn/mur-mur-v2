@@ -1,12 +1,13 @@
-import net from "node:net";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import { WebSocketServer } from "ws";
 import { WakeMonitor, normalizeWakeConfig } from "../scripts/wake-monitor.mjs";
-import { buildCodexTurnText, CodexAppServerClient, createCodexAppServerInjector } from "../scripts/codex-app-server-wake.mjs";
+import { buildCodexTurnText, buildTurnStartRequest, CodexAppServerClient, createCodexAppServerInjector } from "../scripts/codex-app-server-wake.mjs";
 
 const payload = {
   from: "agent-jarvis",
@@ -36,22 +37,42 @@ test("normalizeWakeConfig accepts Codex app-server peer settings", () => {
   });
 });
 
-test("Codex app-server injector sends turn/start over Unix socket", async () => {
+test("buildTurnStartRequest builds Codex turn/start params", () => {
+  const request = buildTurnStartRequest({
+    id: 7,
+    threadId: "thread-1",
+    text: buildCodexTurnText(payload),
+    metadata: { murmur_msg_id: payload.msgId },
+  });
+
+  assert.equal(request.id, 7);
+  assert.equal(request.method, "turn/start");
+  assert.equal(request.params.threadId, "thread-1");
+  assert.equal(request.params.responsesapiClientMetadata.murmur_msg_id, payload.msgId);
+  assert.match(request.params.input[0].text, /msgId=msg-codex-1/);
+});
+
+test("Codex app-server client initializes before turn/start over WS-over-UDS", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "murmur-codex-wake-"));
   const socketPath = path.join(dir, "codex.sock");
   const received = [];
-  const server = net.createServer((socket) => {
-    socket.setEncoding("utf8");
-    socket.on("data", (chunk) => {
-      for (const line of chunk.split(/\r?\n/).filter(Boolean)) {
-        const request = JSON.parse(line);
-        received.push(request);
-        socket.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { turn: { id: "turn-1" } } })}\n`);
+  const httpServer = http.createServer();
+  const wsServer = new WebSocketServer({ server: httpServer });
+
+  wsServer.on("connection", (socket) => {
+    socket.on("message", (data) => {
+      const request = JSON.parse(data.toString("utf8"));
+      received.push(request);
+      if (request.method === "initialize") {
+        socket.send(JSON.stringify({ id: request.id, result: { protocolVersion: "0.1.0" } }));
+      }
+      if (request.method === "turn/start") {
+        socket.send(JSON.stringify({ id: request.id, result: { turn: { id: "turn-1" } } }));
       }
     });
   });
-  server.listen(socketPath);
-  await once(server, "listening");
+  httpServer.listen(socketPath);
+  await once(httpServer, "listening");
 
   const client = new CodexAppServerClient({ socketPath });
   const result = await client.request("turn/start", {
@@ -59,12 +80,66 @@ test("Codex app-server injector sends turn/start over Unix socket", async () => 
     input: [{ type: "text", text: buildCodexTurnText(payload), text_elements: [] }],
   });
 
-  server.close();
+  wsServer.close();
+  httpServer.close();
+
   assert.deepEqual(result, { turn: { id: "turn-1" } });
-  assert.equal(received[0].method, "turn/start");
-  assert.equal(received[0].params.threadId, "thread-1");
-  assert.match(received[0].params.input[0].text, /msgId=msg-codex-1/);
-  assert.match(received[0].params.input[0].text, /hello codex/);
+  assert.equal(received[0].method, "initialize");
+  assert.equal(received[0].params.clientInfo.name, "murmur-codex-app-server-wake");
+  assert.equal(received[1].method, "initialized");
+  assert.equal(received[2].method, "turn/start");
+  assert.equal(received[2].params.threadId, "thread-1");
+  assert.match(received[2].params.input[0].text, /msgId=msg-codex-1/);
+  assert.match(received[2].params.input[0].text, /hello codex/);
+});
+
+test("Codex app-server client fails loud on initialize errors", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "murmur-codex-wake-"));
+  const socketPath = path.join(dir, "codex.sock");
+  const httpServer = http.createServer();
+  const wsServer = new WebSocketServer({ server: httpServer });
+
+  wsServer.on("connection", (socket) => {
+    socket.on("message", (data) => {
+      const request = JSON.parse(data.toString("utf8"));
+      if (request.method === "initialize") {
+        socket.send(JSON.stringify({ id: request.id, error: { message: "denied" } }));
+      }
+    });
+  });
+  httpServer.listen(socketPath);
+  await once(httpServer, "listening");
+
+  const client = new CodexAppServerClient({ socketPath });
+  await assert.rejects(
+    () => client.request("turn/start", { threadId: "thread-1", input: [] }),
+    /codex-app-server-initialize-error:denied/,
+  );
+
+  wsServer.close();
+  httpServer.close();
+});
+
+test("Codex app-server client reports close before response", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "murmur-codex-wake-"));
+  const socketPath = path.join(dir, "codex.sock");
+  const httpServer = http.createServer();
+  const wsServer = new WebSocketServer({ server: httpServer });
+
+  wsServer.on("connection", (socket) => {
+    socket.close();
+  });
+  httpServer.listen(socketPath);
+  await once(httpServer, "listening");
+
+  const client = new CodexAppServerClient({ socketPath });
+  await assert.rejects(
+    () => client.request("turn/start", { threadId: "thread-1", input: [] }),
+    /codex-app-server-closed-before-response:.*:before-initialize/,
+  );
+
+  wsServer.close();
+  httpServer.close();
 });
 
 test("WakeMonitor gates Codex app-server wake before injector", async () => {
