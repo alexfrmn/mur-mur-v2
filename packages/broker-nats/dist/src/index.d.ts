@@ -68,6 +68,12 @@ export declare class NatsBroker {
         consumerId?: string;
     }): Promise<BrokerSubscription>;
     private processAckFrame;
+    startJetStreamAdvisoryDlq(params: {
+        outbox: OutboxStore;
+    }): Promise<BrokerSubscription>;
+    private processJetStreamAdvisoryFrame;
+    private jetStreamAdvisoryKind;
+    private jetStreamAdvisoryReason;
     /**
      * Basic outbox worker:
      * - picks due records

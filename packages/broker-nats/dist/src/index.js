@@ -320,6 +320,82 @@ export class NatsBroker {
             });
         }
     }
+    async startJetStreamAdvisoryDlq(params) {
+        await this.connect();
+        if (!this.nc)
+            throw new Error("nats-connection-unavailable");
+        if (!this.jsm)
+            throw new Error("jetstream-manager-unavailable");
+        const stream = this.streamName();
+        const subjects = [
+            `$JS.EVENT.ADVISORY.CONSUMER.MAX_DELIVERIES.${stream}.*`,
+            `$JS.EVENT.ADVISORY.CONSUMER.MSG_TERMINATED.${stream}.*`,
+        ];
+        const subs = subjects.map((subject) => this.nc.subscribe(subject));
+        for (const sub of subs) {
+            (async () => {
+                for await (const m of sub) {
+                    await this.processJetStreamAdvisoryFrame(m.data, params.outbox);
+                }
+            })().catch((err) => {
+                const e = err instanceof Error ? err : new Error(String(err));
+                console.error("[NatsBroker.startJetStreamAdvisoryDlq] loop crashed", {
+                    message: e.message,
+                    stack: e.stack,
+                });
+            });
+        }
+        return {
+            unsubscribe: () => {
+                for (const sub of subs)
+                    sub.unsubscribe();
+            },
+        };
+    }
+    async processJetStreamAdvisoryFrame(data, outbox) {
+        if (!this.jsm)
+            throw new Error("jetstream-manager-unavailable");
+        try {
+            const advisory = JSON.parse(this.sc.decode(data));
+            const advisoryKind = this.jetStreamAdvisoryKind(advisory);
+            if (!advisoryKind)
+                return;
+            if (advisory.stream !== this.streamName())
+                return;
+            const streamSeqRaw = advisory.stream_seq;
+            if (typeof streamSeqRaw !== "number" || !Number.isFinite(streamSeqRaw) || streamSeqRaw <= 0)
+                return;
+            const streamSeq = Math.trunc(streamSeqRaw);
+            const stored = await this.jsm.streams.getMessage(advisory.stream, { seq: streamSeq });
+            const envelope = JSON.parse(this.sc.decode(stored.data));
+            if (!isEnvelopeV1(envelope))
+                return;
+            await outbox.markDlq(envelope.msgId, this.jetStreamAdvisoryReason(advisoryKind, advisory, streamSeq));
+        }
+        catch (err) {
+            const e = err instanceof Error ? err : new Error(String(err));
+            console.error("[NatsBroker.startJetStreamAdvisoryDlq] malformed advisory frame", {
+                message: e.message,
+                stack: e.stack,
+                raw: this.sc.decode(data),
+            });
+        }
+    }
+    jetStreamAdvisoryKind(advisory) {
+        if (advisory.type === "io.nats.jetstream.advisory.v1.max_deliver")
+            return "max_deliver";
+        if (advisory.type === "io.nats.jetstream.advisory.v1.terminated")
+            return "terminated";
+        return undefined;
+    }
+    jetStreamAdvisoryReason(kind, advisory, streamSeq) {
+        const consumer = advisory.consumer ?? "unknown-consumer";
+        const deliveriesRaw = advisory.deliveries;
+        const deliveries = typeof deliveriesRaw === "number" && Number.isFinite(deliveriesRaw)
+            ? `:deliveries=${Math.trunc(deliveriesRaw)}`
+            : "";
+        return `jetstream-advisory:${kind}:${consumer}${deliveries}:stream_seq=${streamSeq}`;
+    }
     /**
      * Basic outbox worker:
      * - picks due records

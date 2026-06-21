@@ -18,13 +18,22 @@ const envelope = {
   signature: "sig",
 };
 
-const makeJetStreamBroker = ({ streamInfoThrows = true, consumerInfo, messages = [], brokerConfig = {} } = {}) => {
+const makeJetStreamBroker = ({
+  streamInfoThrows = true,
+  consumerInfo,
+  messages = [],
+  advisoryMessages = {},
+  storedMessages = new Map(),
+  brokerConfig = {},
+} = {}) => {
   const streamsAdded = [];
   const consumersAdded = [];
   const consumersUpdated = [];
   const published = [];
   const acked = [];
   const nacked = [];
+  const subscribed = [];
+  const getMessageQueries = [];
 
   const fakeMessages = {
     async *[Symbol.asyncIterator]() {
@@ -54,6 +63,12 @@ const makeJetStreamBroker = ({ streamInfoThrows = true, consumerInfo, messages =
       },
       async update(_stream, config) {
         streamsAdded.push(config);
+      },
+      async getMessage(stream, query) {
+        getMessageQueries.push({ stream, query });
+        const msg = storedMessages.get(`${stream}:${query.seq}`);
+        if (!msg) throw new Error("message-missing");
+        return msg;
       },
     },
     consumers: {
@@ -94,6 +109,18 @@ const makeJetStreamBroker = ({ streamInfoThrows = true, consumerInfo, messages =
     jetstream() {
       return fakeJs;
     },
+    subscribe(subject) {
+      subscribed.push(subject);
+      const frames = advisoryMessages[subject] ?? [];
+      return {
+        async *[Symbol.asyncIterator]() {
+          for (const data of frames) {
+            yield { data };
+          }
+        },
+        unsubscribe() {},
+      };
+    },
     async drain() {},
   };
 
@@ -106,7 +133,7 @@ const makeJetStreamBroker = ({ streamInfoThrows = true, consumerInfo, messages =
   });
   broker.nc = fakeNc;
 
-  return { broker, streamsAdded, consumersAdded, consumersUpdated, published, acked, nacked };
+  return { broker, streamsAdded, consumersAdded, consumersUpdated, published, acked, nacked, subscribed, getMessageQueries };
 };
 
 test("JetStream publish ensures stream and uses envelope msgId as dedupe id", async () => {
@@ -310,4 +337,42 @@ test("JetStream ACK correlation consumes durable ack subject and updates outbox"
   assert.equal(consumersAdded[0].config.filter_subject, "ack.agent-sender");
   assert.deepEqual(marked, [["acked", envelope.msgId]]);
   assert.equal(acked.length, 1);
+});
+
+test("JetStream DLQ advisory resolves stream sequence and marks original outbox row DLQ", async () => {
+  const advisorySubject = "$JS.EVENT.ADVISORY.CONSUMER.MAX_DELIVERIES.MURMUR.*";
+  const advisory = {
+    type: "io.nats.jetstream.advisory.v1.max_deliver",
+    id: "advisory-1",
+    timestamp: "2026-06-21T18:00:00.000Z",
+    stream: "MURMUR",
+    consumer: "agent-receiver",
+    stream_seq: 42,
+    deliveries: 5,
+  };
+  const { broker, subscribed, getMessageQueries } = makeJetStreamBroker({
+    streamInfoThrows: false,
+    advisoryMessages: {
+      [advisorySubject]: [sc.encode(JSON.stringify(advisory))],
+    },
+    storedMessages: new Map([
+      ["MURMUR:42", { data: sc.encode(JSON.stringify(envelope)) }],
+    ]),
+  });
+  const marked = [];
+  const outbox = {
+    async markDlq(msgId, reason) {
+      marked.push([msgId, reason]);
+    },
+  };
+
+  await broker.startJetStreamAdvisoryDlq({ outbox });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.deepEqual(subscribed, [
+    "$JS.EVENT.ADVISORY.CONSUMER.MAX_DELIVERIES.MURMUR.*",
+    "$JS.EVENT.ADVISORY.CONSUMER.MSG_TERMINATED.MURMUR.*",
+  ]);
+  assert.deepEqual(getMessageQueries, [{ stream: "MURMUR", query: { seq: 42 } }]);
+  assert.deepEqual(marked, [[envelope.msgId, "jetstream-advisory:max_deliver:agent-receiver:deliveries=5:stream_seq=42"]]);
 });
