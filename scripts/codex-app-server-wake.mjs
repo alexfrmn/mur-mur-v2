@@ -1,6 +1,7 @@
-import net from "node:net";
+import WebSocket from "ws";
 
 const DEFAULT_TIMEOUT_MS = 10000;
+const INITIALIZE_TIMEOUT_MS = 10000;
 
 export const buildCodexTurnText = (payload) => {
   const lines = [
@@ -15,7 +16,6 @@ export const buildCodexTurnText = (payload) => {
 };
 
 export const buildTurnStartRequest = ({ id = 1, threadId, text, metadata = {} }) => ({
-  jsonrpc: "2.0",
   id,
   method: "turn/start",
   params: {
@@ -25,73 +25,106 @@ export const buildTurnStartRequest = ({ id = 1, threadId, text, metadata = {} })
   },
 });
 
+const buildInitializeRequest = (id) => ({
+  id,
+  method: "initialize",
+  params: {
+    clientInfo: {
+      name: "murmur-codex-app-server-wake",
+      title: "Murmur Codex App-Server Wake",
+      version: "0.1.0",
+    },
+    capabilities: {
+      experimentalApi: true,
+      requestAttestation: false,
+      optOutNotificationMethods: [
+        "command/exec/outputDelta",
+        "item/agentMessage/delta",
+        "item/plan/delta",
+        "item/fileChange/outputDelta",
+        "item/reasoning/summaryTextDelta",
+        "item/reasoning/textDelta",
+      ],
+    },
+  },
+});
+
 export class CodexAppServerClient {
-  constructor({ socketPath, timeoutMs = DEFAULT_TIMEOUT_MS, connect = net.createConnection } = {}) {
+  constructor({ socketPath, timeoutMs = DEFAULT_TIMEOUT_MS, WebSocketImpl = WebSocket } = {}) {
     if (!socketPath) throw new Error("codex-app-server-socket-missing");
     this.socketPath = socketPath;
     this.timeoutMs = timeoutMs;
-    this.connect = connect;
+    this.WebSocketImpl = WebSocketImpl;
     this.nextId = 1;
   }
 
   request(method, params) {
     const id = this.nextId++;
-    const request = { jsonrpc: "2.0", id, method, params };
+    const request = { id, method, params };
     return this.send(request, id);
   }
 
   send(request, expectedId = request.id) {
     return new Promise((resolve, reject) => {
-      let buffer = "";
-      const socket = this.connect({ path: this.socketPath });
+      let settled = false;
+      let initialized = false;
+      const initId = `init-${this.nextId++}`;
+      const url = `ws+unix://${this.socketPath}:/`;
+      const socket = new this.WebSocketImpl(url, {
+        perMessageDeflate: false,
+        handshakeTimeout: Math.min(this.timeoutMs, INITIALIZE_TIMEOUT_MS),
+      });
       const timer = setTimeout(() => {
-        socket.destroy();
-        reject(new Error(`codex-app-server-timeout:${this.socketPath}`));
+        finish(new Error(`codex-app-server-timeout:${this.socketPath}`));
       }, this.timeoutMs);
 
-      const cleanup = () => clearTimeout(timer);
-      socket.setEncoding("utf8");
-      socket.on("connect", () => {
-        socket.write(`${JSON.stringify(request)}\n`);
-      });
-      socket.on("data", (chunk) => {
-        buffer += chunk;
-        const lines = buffer.split(/\r?\n/);
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          let message;
-          try {
-            message = JSON.parse(line);
-          } catch {
-            continue;
-          }
-          if (message.id !== expectedId) continue;
-          cleanup();
-          socket.end();
+      const finish = (err, result) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try {
+          socket.close();
+        } catch {
+          // Ignore close races; the request already has a terminal result.
+        }
+        if (err) reject(err);
+        else resolve(result);
+      };
+
+      const sendJson = (message) => socket.send(JSON.stringify(message));
+
+      socket.on("open", () => sendJson(buildInitializeRequest(initId)));
+      socket.on("message", (data) => {
+        let message;
+        try {
+          message = JSON.parse(data.toString("utf8"));
+        } catch {
+          return;
+        }
+
+        if (message.id === initId) {
           if (message.error) {
-            reject(new Error(`codex-app-server-error:${message.error.message || JSON.stringify(message.error)}`));
-          } else {
-            resolve(message.result);
+            finish(new Error(`codex-app-server-initialize-error:${message.error.message || JSON.stringify(message.error)}`));
+            return;
           }
+          initialized = true;
+          sendJson({ method: "initialized" });
+          sendJson(request);
+          return;
+        }
+
+        if (message.id !== expectedId) return;
+        if (message.error) {
+          finish(new Error(`codex-app-server-error:${message.error.message || JSON.stringify(message.error)}`));
+        } else {
+          finish(null, message.result);
         }
       });
       socket.on("error", (err) => {
-        cleanup();
-        reject(new Error(`codex-app-server-connect-failed:${this.socketPath}:${err.message}`));
+        finish(new Error(`codex-app-server-connect-failed:${this.socketPath}:${err.message}`));
       });
       socket.on("close", () => {
-        cleanup();
-        if (!buffer.trim()) return;
-        try {
-          const message = JSON.parse(buffer);
-          if (message.id === expectedId) {
-            if (message.error) reject(new Error(`codex-app-server-error:${message.error.message || JSON.stringify(message.error)}`));
-            else resolve(message.result);
-          }
-        } catch {
-          reject(new Error(`codex-app-server-closed-with-partial-response:${this.socketPath}`));
-        }
+        if (!settled) finish(new Error(`codex-app-server-closed-before-response:${this.socketPath}:${initialized ? "after-initialize" : "before-initialize"}`));
       });
     });
   }
