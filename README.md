@@ -50,7 +50,7 @@ A **murmuration** is one of nature's most extraordinary phenomena — thousands 
 - **Durable JetStream transport (opt-in).** Turn on at-least-once durability with NATS JetStream — finite redelivery (`max_deliver`), explicit ACK, dead-letter on exhaustion — while keeping the SQLite outbox as the transactional source of truth. Default-OFF; set `MURMUR_JETSTREAM=1` to enable.
 - **Federation (live-proven in isolation; no real partner yet).** `org/agentId` addressing, an Ed25519-signed key directory, a `fed.*` NATS leaf-node/account contract, a `RosterStore` (pinned-key trust + monotonic-version replay guard), and an account-config renderer. Proven end-to-end against a **real local NATS mesh** — cross-org sealed+signed delivery on isolated accounts, the same over a **leaf-node topology** (org-per-server), and least-privilege publish/subscribe boundaries. Still **not wired to a second real partner org** (the only remaining gate).
 - **A2A bridge (live client round-trip; mock internal counterpart).** A bridge against the industry-standard [A2A protocol](https://a2aproject.github.io/A2A/). A **real `@a2a-js/sdk` client → bridge → NATS → reply** round-trip is proven over HTTP (against a mock internal agent), and Agent-Card transport discovery is fixed. Still **not connected to a real remote A2A agent**.
-- **Native wake.** Live-session wake (Claude asyncRewake, Codex app-server UDS) with self-healing thread re-seed is done. **Always-on wake into a *dead* session** now has its infrastructure — a cold-start spawn-on-inbound watcher (fresh `codex exec` per message batch) under a linger-enabled systemd user service; the final dead-session proof (a real inbound while no interactive session is alive) is pending a natural idle window.
+- **Native wake.** This repo ships **live-session** wake — Claude asyncRewake, Codex app-server UDS, self-healing thread re-seed (`WakeMonitor`). **Always-on wake into a *dead* session** is provided by an **out-of-repo cold-start sidecar in the reference Codex deployment** (spawn-on-inbound → fresh `codex exec` per message batch, under a linger-enabled systemd user service); a repo-shipped version and the strict no-live-session proof are still pending.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
@@ -218,7 +218,7 @@ This enables **fully autonomous overnight work** — launch 2-3 agents, they col
 - **MCP Server** — 7 tools for any MCP-compatible AI client
 - **`murmur_request`** — send-and-wait: no more manual polling
 - **Invite Flow** — 3 commands to connect two agents, zero JSON editing
-- **Native Wake** — Claude asyncRewake / Codex app-server UDS with self-healing thread re-seed; plus a cold-start spawn-on-inbound watcher for always-on (dead-session) wake (v2.1)
+- **Native Wake** — live-session wake via Claude asyncRewake / Codex app-server UDS with self-healing thread re-seed (always-on dead-session wake is an out-of-repo reference-deployment sidecar) (v2.1)
 - **A2A Bridge** — speaks the industry-standard A2A protocol into the Murmur mesh; live client→bridge→NATS→reply round-trip proven, real remote agent pending (v2.1)
 - **Telegram Notifications** — get notified when agents talk
 
@@ -380,7 +380,7 @@ node scripts/murmur-notify-init.mjs discord
 ## Testing
 
 ```bash
-npm test                          # Build + all unit tests (41 tests)
+npm test                          # Build + all unit tests (57 root tests + workspace suites)
 npm run test:integration          # ACK correlation integration
 npm run test:notify-smoke         # Notification adapter smoke
 
@@ -432,7 +432,7 @@ See [protocol-v1.md](docs/protocol-v1.md) for the full specification.
 ### In Progress
 - [ ] **Federation (v2.1)** — addressing + Ed25519 signed key directory + `fed.*` contract + account-config renderer + `RosterStore` (pinned-key trust + monotonic-version replay guard) are **live-proven against a real local NATS mesh**: cross-org sealed+signed delivery on isolated accounts, the same over a **leaf-node topology** (org-per-server), and least-privilege pub/sub permission boundaries (`integration/` smokes, cross-verified). Remaining gate: **not yet wired to a second real partner org**
 - [ ] **A2A interop bridge (v2.1)** — a **real `@a2a-js/sdk` client → bridge → NATS → reply round-trip is proven** over HTTP (against a mock internal agent), and Agent-Card transport discovery is fixed. Remaining gate: **not yet connected to a real remote A2A agent**
-- [ ] **Always-on wake (dead session) (v2.1)** — cold-start spawn-on-inbound watcher (fresh `codex exec` per message batch, exactly-once) under a linger-enabled systemd user service. Infrastructure complete; final dead-session proof (real inbound while no interactive session is alive) pending a natural idle window
+- [ ] **Always-on wake (dead session) (v2.1)** — a cold-start spawn-on-inbound sidecar (fresh `codex exec` per batch, exactly-once, linger-enabled systemd user service) exists in the **reference Codex deployment, outside this repo**; a repo-shipped version and the strict no-live-session proof remain pending
 - [x] Prometheus metrics exporter — outbox depth, delivery latency, error rates
 - [ ] npm package publishing — `@murmurv2/*` on npm registry
 - [ ] NATS native request-reply — replace polling with ephemeral inbox subjects
