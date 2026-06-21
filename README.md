@@ -48,9 +48,9 @@ A **murmuration** is one of nature's most extraordinary phenomena — thousands 
 ## What's New in v2.1
 
 - **Durable JetStream transport (opt-in).** Turn on at-least-once durability with NATS JetStream — finite redelivery (`max_deliver`), explicit ACK, dead-letter on exhaustion — while keeping the SQLite outbox as the transactional source of truth. Default-OFF; set `MURMUR_JETSTREAM=1` to enable.
-- **Federation primitives (not yet live).** `org/agentId` addressing (bare ids stay local), an Ed25519-signed key directory, and a narrow `fed.*` NATS leaf-node/account contract — coded and unit-tested. Live cross-org interop is still to come.
-- **A2A bridge skeleton (not yet live).** A bridge scaffolded against the industry-standard [A2A protocol](https://a2aproject.github.io/A2A/) to forward tasks into the Murmur mesh — code + unit tests only; not yet connected to a real A2A agent.
-- **Self-healing native wake.** Codex/Claude wake re-seeds stale app-server threads automatically. Full always-on wake (a persistent live agent session) is still in progress.
+- **Federation (live-proven in isolation; no real partner yet).** `org/agentId` addressing, an Ed25519-signed key directory, a `fed.*` NATS leaf-node/account contract, a `RosterStore` (pinned-key trust + monotonic-version replay guard), and an account-config renderer. Proven end-to-end against a **real local NATS mesh** — cross-org sealed+signed delivery on isolated accounts, the same over a **leaf-node topology** (org-per-server), and least-privilege publish/subscribe boundaries. Still **not wired to a second real partner org** (the only remaining gate).
+- **A2A bridge (live client round-trip; mock internal counterpart).** A bridge against the industry-standard [A2A protocol](https://a2aproject.github.io/A2A/). A **real `@a2a-js/sdk` client → bridge → NATS → reply** round-trip is proven over HTTP (against a mock internal agent), and Agent-Card transport discovery is fixed. Still **not connected to a real remote A2A agent**.
+- **Native wake.** Live-session wake (Claude asyncRewake, Codex app-server UDS) with self-healing thread re-seed is done. **Always-on wake into a *dead* session** now has its infrastructure — a cold-start spawn-on-inbound watcher (fresh `codex exec` per message batch) under a linger-enabled systemd user service; the final dead-session proof (a real inbound while no interactive session is alive) is pending a natural idle window.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
@@ -218,8 +218,8 @@ This enables **fully autonomous overnight work** — launch 2-3 agents, they col
 - **MCP Server** — 7 tools for any MCP-compatible AI client
 - **`murmur_request`** — send-and-wait: no more manual polling
 - **Invite Flow** — 3 commands to connect two agents, zero JSON editing
-- **Native Wake** — route agent wakeups through Claude asyncRewake or Codex app-server UDS, with self-healing thread re-seed (v2.1)
-- **A2A Bridge** — speaks the industry-standard A2A protocol into the Murmur mesh (skeleton, v2.1)
+- **Native Wake** — Claude asyncRewake / Codex app-server UDS with self-healing thread re-seed; plus a cold-start spawn-on-inbound watcher for always-on (dead-session) wake (v2.1)
+- **A2A Bridge** — speaks the industry-standard A2A protocol into the Murmur mesh; live client→bridge→NATS→reply round-trip proven, real remote agent pending (v2.1)
 - **Telegram Notifications** — get notified when agents talk
 
 ### Operations
@@ -238,6 +238,9 @@ This enables **fully autonomous overnight work** — launch 2-3 agents, they col
 - **Org/Agent Addressing** — `org/agentId` routing; bare ids resolve to the local org (back-compat)
 - **Signed Key Directory** — per-org Ed25519-signed roster (agent → X25519 encrypt + Ed25519 verify keys), verified against a pinned org key
 - **NATS Subject Contract** — `fed.*` leaf-node/account export/import isolation; payload stays E2E-opaque across orgs
+- **Account-Config Renderer** — generate the per-org NATS accounts config (partner-scoped service exports, optional least-privilege leaf-user permissions) straight from the contract
+- **RosterStore** — runtime trust + replay guard: pinned-key verification + monotonic-version enforcement (rejects stale/downgraded rosters) + key-rotation epoch
+- **Live-proven in isolation** — cross-org sealed+signed delivery on real NATS accounts, the same over a leaf-node topology, and publish/subscribe permission boundaries (`integration/` smokes; real partner org pending)
 
 ---
 
@@ -300,7 +303,7 @@ mur-mur-v2/
 │   ├── security/          # NaCl crypto (X25519, XChaCha20, Ed25519), MLS scaffold
 │   ├── mcp-server/        # JSON-RPC MCP stdio server (7 tools)
 │   ├── bridge-telegram/   # Telegram bot adapter
-│   ├── bridge-a2a/        # A2A protocol bridge (skeleton)
+│   ├── bridge-a2a/        # A2A protocol bridge (live client round-trip proven; remote agent pending)
 │   ├── bridge-openclaw/   # Legacy OpenClaw package, not on the wake/notify path
 │   ├── bridge-murmur/     # Murmur-to-Murmur federation (stub)
 │   ├── federation/        # org/agent addressing + Ed25519 signed key directory
@@ -418,7 +421,7 @@ See [protocol-v1.md](docs/protocol-v1.md) for the full specification.
 - [x] Invite-based peer setup — 3 commands, zero JSON editing
 - [x] MCP server with 7 tools — full agent integration
 - [x] `murmur_request` — send-and-wait for autonomous workflows
-- [x] Native wake — Claude asyncRewake and Codex app-server UDS, with self-healing thread re-seed (v2.1)
+- [x] Native wake (live session) — Claude asyncRewake and Codex app-server UDS, with self-healing thread re-seed (v2.1)
 - [x] Observability dashboard — real-time message flow + 3D visualization
 - [x] Telegram/Discord/WhatsApp notification adapters
 - [x] Dead-letter queue + poison message handling
@@ -427,8 +430,9 @@ See [protocol-v1.md](docs/protocol-v1.md) for the full specification.
 - [x] Systemd + Docker deployment
 
 ### In Progress
-- [ ] **Federation (v2.1)** — `org/agentId` addressing + Ed25519 signed key directory + `fed.*` subject contract are coded and unit-tested, but **not yet wired to a live partner mesh** (no two real orgs have federated)
-- [ ] **A2A interop bridge (v2.1)** — skeleton wired against `@a2a-js/sdk` and unit-tested, but **not yet connected to a live A2A agent** (no real A2A task has flowed through it)
+- [ ] **Federation (v2.1)** — addressing + Ed25519 signed key directory + `fed.*` contract + account-config renderer + `RosterStore` (pinned-key trust + monotonic-version replay guard) are **live-proven against a real local NATS mesh**: cross-org sealed+signed delivery on isolated accounts, the same over a **leaf-node topology** (org-per-server), and least-privilege pub/sub permission boundaries (`integration/` smokes, cross-verified). Remaining gate: **not yet wired to a second real partner org**
+- [ ] **A2A interop bridge (v2.1)** — a **real `@a2a-js/sdk` client → bridge → NATS → reply round-trip is proven** over HTTP (against a mock internal agent), and Agent-Card transport discovery is fixed. Remaining gate: **not yet connected to a real remote A2A agent**
+- [ ] **Always-on wake (dead session) (v2.1)** — cold-start spawn-on-inbound watcher (fresh `codex exec` per message batch, exactly-once) under a linger-enabled systemd user service. Infrastructure complete; final dead-session proof (real inbound while no interactive session is alive) pending a natural idle window
 - [x] Prometheus metrics exporter — outbox depth, delivery latency, error rates
 - [ ] npm package publishing — `@murmurv2/*` on npm registry
 - [ ] NATS native request-reply — replace polling with ephemeral inbox subjects
