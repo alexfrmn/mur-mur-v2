@@ -157,7 +157,11 @@ export function lookupAgentKeys(roster: SignedRoster, agentId: string): AgentKey
 
 // ──────────────────── Roster store (runtime trust + replay guard) ────────────────────
 
-export type RosterRejectReason = "org-not-pinned" | "signature-invalid" | "stale-or-replay";
+export type RosterRejectReason =
+  | "org-not-pinned"
+  | "signature-invalid"
+  | "invalid-version"
+  | "stale-or-replay";
 
 export interface RosterOfferResult {
   accepted: boolean;
@@ -182,19 +186,34 @@ export class RosterStore {
       pinnedOrgKeys instanceof Map ? new Map(pinnedOrgKeys) : new Map(Object.entries(pinnedOrgKeys));
   }
 
-  /** Pin (or re-pin) an org's directory-signing public key (out-of-band trust input). */
+  /**
+   * Pin (or re-pin) an org's directory-signing public key (out-of-band trust input).
+   * Rotating to a DIFFERENT key starts a fresh trust epoch: the org's previously
+   * accepted roster (signed under the old key) is dropped, so a new roster under the
+   * new key is accepted from any version rather than being blocked as stale-or-replay.
+   * Re-pinning the same key is a no-op.
+   */
   pin(org: string, signingPublicKey: string): void {
+    const previous = this.pinned.get(org);
     this.pinned.set(org, signingPublicKey);
+    if (previous !== undefined && previous !== signingPublicKey) {
+      this.latest.delete(org);
+    }
   }
 
   /**
-   * Offer a signed roster. Accepted only when it verifies against the pinned org key
-   * and is strictly newer than the last accepted version (monotonic ⇒ no replay).
+   * Offer a signed roster. Accepted only when it (1) verifies against the pinned org
+   * key, (2) carries a structurally valid version (positive integer — enforced here,
+   * not trusted from the signer, since the store is the wire/runtime boundary), and
+   * (3) is strictly newer than the last accepted version (monotonic ⇒ no replay).
    */
   async offer(roster: SignedRoster): Promise<RosterOfferResult> {
     const pin = this.pinned.get(roster.org);
     if (!pin) return { accepted: false, reason: "org-not-pinned" };
     if (!(await verifyRoster(roster, pin))) return { accepted: false, reason: "signature-invalid" };
+    if (!Number.isInteger(roster.version) || roster.version < 1) {
+      return { accepted: false, reason: "invalid-version" };
+    }
     const current = this.latest.get(roster.org);
     if (current && roster.version <= current.version) {
       return { accepted: false, reason: "stale-or-replay" };

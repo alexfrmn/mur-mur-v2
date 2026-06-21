@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createKeyPair, createSigningKeyPair } from "../../security/dist/src/index.js";
+import { createKeyPair, createSigningKeyPair, signEnvelope } from "../../security/dist/src/index.js";
 import {
   canonicalRoster,
   formatAddress,
@@ -194,4 +194,47 @@ test("RosterStore: pin() can add trust after construction", async () => {
   assert.equal((await store.offer(await makeRoster("partner", 1, sign, ak))).reason, "org-not-pinned");
   store.pin("partner", sign.publicKey);
   assert.deepEqual(await store.offer(await makeRoster("partner", 1, sign, ak)), { accepted: true });
+});
+
+// Forge a correctly-signed SignedRoster directly (bypassing signRoster's validation),
+// to prove offer() enforces version validity itself at the wire/runtime boundary.
+async function forgeSignedRoster(org, version, sign, agentKeys) {
+  const body = { org, version, issuedAt: "2026-06-21T00:00:00Z", agents: { "agent-1": agentKeys } };
+  const signature = await signEnvelope(canonicalRoster(body), sign.privateKey);
+  return { ...body, signature, signingPublicKey: sign.publicKey };
+}
+
+test("RosterStore: rejects an authentic roster with an invalid version", async () => {
+  const sign = await createSigningKeyPair();
+  const ak = await agentKeyPair();
+  const store = new RosterStore({ partner: sign.publicKey });
+  for (const v of [0, -1, 1.5]) {
+    const forged = await forgeSignedRoster("partner", v, sign, ak);
+    assert.deepEqual(await store.offer(forged), { accepted: false, reason: "invalid-version" }, `version ${v}`);
+  }
+  assert.deepEqual(await store.offer(await forgeSignedRoster("partner", 1, sign, ak)), { accepted: true });
+});
+
+test("RosterStore: re-pinning a new key rotates the trust epoch", async () => {
+  const keyA = await createSigningKeyPair();
+  const keyB = await createSigningKeyPair();
+  const akA = await agentKeyPair();
+  const akB = await agentKeyPair();
+  const store = new RosterStore({ partner: keyA.publicKey });
+  assert.deepEqual(await store.offer(await makeRoster("partner", 10, keyA, akA)), { accepted: true });
+  store.pin("partner", keyB.publicKey); // rotate trust root
+  assert.throws(() => store.agentKeys("partner", "agent-1"), /no accepted roster/); // old roster dropped
+  // fresh key-B roster at a low version is accepted (new epoch), not blocked as stale
+  assert.deepEqual(await store.offer(await makeRoster("partner", 1, keyB, akB)), { accepted: true });
+  assert.deepEqual(store.agentKeys("partner", "agent-1"), akB);
+});
+
+test("RosterStore: re-pinning the same key preserves accepted state", async () => {
+  const sign = await createSigningKeyPair();
+  const ak = await agentKeyPair();
+  const store = new RosterStore({ partner: sign.publicKey });
+  await store.offer(await makeRoster("partner", 5, sign, ak));
+  store.pin("partner", sign.publicKey); // same key -> no epoch reset
+  assert.equal(store.current("partner").version, 5);
+  assert.deepEqual(await store.offer(await makeRoster("partner", 5, sign, ak)), { accepted: false, reason: "stale-or-replay" });
 });
