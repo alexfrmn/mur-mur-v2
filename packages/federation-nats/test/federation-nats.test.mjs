@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildFederationAccountContract,
+  buildFederationNatsAccountConfig,
   decodeFederationToken,
   encodeFederationToken,
   federationAckSubject,
   federationMessageSubject,
   parseFederationSubject,
+  renderFederationNatsAccountsConfig,
   routeFederatedEnvelope,
 } from "../dist/src/index.js";
 
@@ -70,6 +72,49 @@ test("builds account export/import contract scoped to each org subject prefix", 
       },
     ],
   });
+});
+
+test("builds production-facing NATS account config with partner-scoped service exports", () => {
+  assert.deepEqual(buildFederationNatsAccountConfig({
+    localOrg: "aimindset",
+    partnerOrgs: ["partner.org"],
+    users: [{ user: "leaf-aimindset", password: "secret" }],
+  }), {
+    account: "ORG_AIMINDSET",
+    users: [{ user: "leaf-aimindset", password: "secret" }],
+    exports: [{
+      service: "fed.aimindset.>",
+      accounts: ["ORG__XCGFYDG5LCI5VCMC"],
+    }],
+    imports: [{
+      service: {
+        account: "ORG__XCGFYDG5LCI5VCMC",
+        subject: "fed._xcGFydG5lci5vcmc.>",
+      },
+    }],
+  });
+});
+
+test("renders static NATS accounts config from the federation contract", () => {
+  const conf = renderFederationNatsAccountsConfig({
+    orgs: ["aimindset", "partner.org"],
+    port: 4223,
+    usersByOrg: {
+      aimindset: [{ user: "aimindset-leaf", password: "pw-a" }],
+      "partner.org": [{ user: "partner-leaf", password: "pw-b" }],
+    },
+  });
+  assert.match(conf, /^port: 4223\naccounts \{/);
+  assert.match(conf, /ORG_AIMINDSET \{/);
+  assert.match(conf, /\{ user: "aimindset-leaf", password: "pw-a" \}/);
+  assert.match(conf, /\{ service: "fed\.aimindset\.>", accounts: \["ORG__XCGFYDG5LCI5VCMC"\] \}/);
+  assert.match(conf, /\{ service: \{ account: "ORG__XCGFYDG5LCI5VCMC", subject: "fed\._xcGFydG5lci5vcmc\.>" \} \}/);
+  assert.match(conf, /ORG__XCGFYDG5LCI5VCMC \{/);
+});
+
+test("keeps private exports non-public even when an org has no configured partners", () => {
+  const conf = renderFederationNatsAccountsConfig({ orgs: ["aimindset"] });
+  assert.match(conf, /\{ service: "fed\.aimindset\.>", accounts: \[\] \}/);
 });
 
 test("encoded federation tokens are reversible", () => {
