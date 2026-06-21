@@ -5,6 +5,8 @@ export interface BrokerConfig {
     jetstream?: boolean;
     stream?: string;
     streamSubjects?: string[];
+    jetstreamMaxDeliver?: number;
+    jetstreamAckWaitMs?: number;
     token?: string;
     connectMaxAttempts?: number;
     connectBaseBackoffMs?: number;
@@ -43,6 +45,9 @@ export declare class NatsBroker {
     private jetStreamEnabled;
     private streamName;
     private streamSubjects;
+    private jetStreamMaxDeliver;
+    private jetStreamAckWaitNanos;
+    private buildJetStreamConsumerConfig;
     private ensureJetStream;
     private startStatusLoop;
     publish(subject: string, envelope: EnvelopeV1, policy?: SecurityPolicy): Promise<void>;

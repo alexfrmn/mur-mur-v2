@@ -27,6 +27,8 @@ export interface BrokerConfig {
   jetstream?: boolean;
   stream?: string;
   streamSubjects?: string[];
+  jetstreamMaxDeliver?: number;
+  jetstreamAckWaitMs?: number;
   token?: string;
   connectMaxAttempts?: number;
   connectBaseBackoffMs?: number;
@@ -121,6 +123,34 @@ export class NatsBroker {
     return this.config.streamSubjects ?? ["msg.>", "ack.>"];
   }
 
+  private jetStreamMaxDeliver(): number {
+    const value = this.config.jetstreamMaxDeliver ?? 5;
+    if (!Number.isFinite(value) || value < 1) {
+      throw new Error("jetstream-max-deliver-invalid");
+    }
+    return Math.trunc(value);
+  }
+
+  private jetStreamAckWaitNanos(): number {
+    const ackWaitMs = this.config.jetstreamAckWaitMs ?? 30000;
+    if (!Number.isFinite(ackWaitMs) || ackWaitMs <= 0) {
+      throw new Error("jetstream-ack-wait-invalid");
+    }
+    return Math.trunc(ackWaitMs * 1_000_000);
+  }
+
+  private buildJetStreamConsumerConfig(subject: string, durableName: string) {
+    return {
+      durable_name: durableName,
+      name: durableName,
+      filter_subject: subject,
+      ack_policy: AckPolicy.Explicit,
+      deliver_policy: DeliverPolicy.All,
+      max_deliver: this.jetStreamMaxDeliver(),
+      ack_wait: this.jetStreamAckWaitNanos(),
+    };
+  }
+
   private async ensureJetStream(): Promise<void> {
     if (!this.jetStreamEnabled() || !this.nc) return;
     if (this.js && this.jsm) return;
@@ -202,14 +232,14 @@ export class NatsBroker {
       onMessage: MessageHandler;
       maxPoisonAttempts?: number;
     },
-  ): Promise<void> {
+  ): Promise<"ack" | "retry"> {
     let msgId = "unknown";
     let ackSubject = `ack.${params.consumerId}`;
     try {
       const decoded = JSON.parse(this.sc.decode(data));
       if (!isEnvelopeV1(decoded)) {
         await this.publishAck(ackSubject, createAck("unknown", params.consumerId, "nack", "invalid-envelope"));
-        return;
+        return "ack";
       }
 
       msgId = decoded.msgId;
@@ -217,13 +247,14 @@ export class NatsBroker {
       const isDup = await params.dedupe.seen(decoded.msgId, params.consumerId);
       if (isDup) {
         await this.publishAck(ackSubject, createAck(decoded.msgId, params.consumerId, "ack", "duplicate-ignored"));
-        return;
+        return "ack";
       }
 
       await params.onMessage(decoded);
       await params.dedupe.markSeen(decoded.msgId, params.consumerId);
       this.failedDeliveries.delete(`${params.consumerId}:${decoded.msgId}`);
       await this.publishAck(ackSubject, createAck(decoded.msgId, params.consumerId, "ack"));
+      return "ack";
     } catch (err) {
       const reason = err instanceof Error ? err.message : "handler-failed";
       const maxPoisonAttempts = params.maxPoisonAttempts ?? 3;
@@ -234,32 +265,36 @@ export class NatsBroker {
         await params.dedupe.markSeen(msgId, params.consumerId);
         this.failedDeliveries.delete(key);
         await this.publishAck(ackSubject, createAck(msgId, params.consumerId, "nack", `poison-message:${reason}`));
-        return;
+        return "ack";
       }
       await this.publishAck(ackSubject, createAck(msgId, params.consumerId, "nack", reason));
+      return "retry";
     }
   }
 
   private async ensureJetStreamConsumer(subject: string, durableName: string): Promise<void> {
     if (!this.jsm) throw new Error("jetstream-manager-unavailable");
     const stream = this.streamName();
+    const config = this.buildJetStreamConsumerConfig(subject, durableName);
+    let info;
     try {
-      const info = await this.jsm.consumers.info(stream, durableName);
-      const filterSubject = info.config.filter_subject;
-      if (filterSubject && filterSubject !== subject) {
-        throw new Error(`jetstream-consumer-filter-mismatch:${durableName}:${filterSubject}:${subject}`);
-      }
-      return;
+      info = await this.jsm.consumers.info(stream, durableName);
     } catch (err) {
       if (err instanceof Error && err.message.startsWith("jetstream-consumer-filter-mismatch:")) {
         throw err;
       }
-      await this.jsm.consumers.add(stream, {
-        durable_name: durableName,
-        name: durableName,
-        filter_subject: subject,
-        ack_policy: AckPolicy.Explicit,
-        deliver_policy: DeliverPolicy.All,
+      await this.jsm.consumers.add(stream, config);
+      return;
+    }
+
+    const filterSubject = info.config.filter_subject;
+    if (filterSubject && filterSubject !== subject) {
+      throw new Error(`jetstream-consumer-filter-mismatch:${durableName}:${filterSubject}:${subject}`);
+    }
+    if (info.config.max_deliver !== config.max_deliver || info.config.ack_wait !== config.ack_wait) {
+      await this.jsm.consumers.update(stream, durableName, {
+        max_deliver: config.max_deliver,
+        ack_wait: config.ack_wait,
       });
     }
   }
@@ -267,7 +302,7 @@ export class NatsBroker {
   private async consumeJetStream(
     subject: string,
     durableName: string,
-    onMessage: (data: Uint8Array) => Promise<void>,
+    onMessage: (data: Uint8Array) => Promise<"ack" | "retry" | void>,
   ): Promise<BrokerSubscription> {
     await this.ensureJetStreamConsumer(subject, durableName);
     if (!this.js) throw new Error("jetstream-client-unavailable");
@@ -278,8 +313,9 @@ export class NatsBroker {
     (async () => {
       for await (const m of messages) {
         try {
-          await onMessage(m.data);
-          m.ack();
+          const result = await onMessage(m.data);
+          if (result === "retry") m.nak();
+          else m.ack();
         } catch (err) {
           m.nak();
           const e = err instanceof Error ? err : new Error(String(err));
