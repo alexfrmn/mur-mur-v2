@@ -20,9 +20,10 @@
     "test:unit": "node --test tests/*.test.mjs",
     "test:integration": "node scripts/run-integration.mjs",
     "test:notify-smoke": "node scripts/notify-smoke.mjs",
+    "test:a2a": "npm --workspace @murmurv2/bridge-a2a test",
     "test:federation": "npm --workspace @murmurv2/federation test",
     "test:federation-nats": "npm --workspace @murmurv2/federation-nats test",
-    "test": "npm run build && npm run test:unit && npm run test:notify-smoke && npm run test:federation && npm run test:federation-nats"
+    "test": "npm run build && npm run test:unit && npm run test:notify-smoke && npm run test:a2a && npm run test:federation && npm run test:federation-nats"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
