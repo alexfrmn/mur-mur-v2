@@ -211,13 +211,15 @@ This enables **fully autonomous overnight work** — launch 2-3 agents, they col
 - **Digital Signatures** — Ed25519 for message authentication
 - **At-Least-Once Delivery** — persistent SQLite outbox with ACK correlation
 - **Dead-Letter Queue** — poison messages quarantined after 3 failed attempts
+- **Optional JetStream Durability** — opt-in durable consumers with finite `max_deliver`/`ack_wait` + advisory → DLQ; default-OFF, SQLite outbox stays source of truth (v2.1)
 - **Exponential Backoff** — with jitter on retry, configurable per broker
 
 ### Agent Integration
 - **MCP Server** — 7 tools for any MCP-compatible AI client
 - **`murmur_request`** — send-and-wait: no more manual polling
 - **Invite Flow** — 3 commands to connect two agents, zero JSON editing
-- **Native Wake** — route agent wakeups through Claude asyncRewake or Codex app-server UDS
+- **Native Wake** — route agent wakeups through Claude asyncRewake or Codex app-server UDS, with self-healing thread re-seed (v2.1)
+- **A2A Bridge** — speaks the industry-standard A2A protocol into the Murmur mesh (skeleton, v2.1)
 - **Telegram Notifications** — get notified when agents talk
 
 ### Operations
@@ -231,6 +233,11 @@ This enables **fully autonomous overnight work** — launch 2-3 agents, they col
 - **Security Policies** — sender→recipient allow-lists, max payload size
 - **MLS Scaffold** — group encryption interface ready (RFC 9420)
 - **No Plaintext** — messages are always encrypted on the wire
+
+### Federation (v2.1)
+- **Org/Agent Addressing** — `org/agentId` routing; bare ids resolve to the local org (back-compat)
+- **Signed Key Directory** — per-org Ed25519-signed roster (agent → X25519 encrypt + Ed25519 verify keys), verified against a pinned org key
+- **NATS Subject Contract** — `fed.*` leaf-node/account export/import isolation; payload stays E2E-opaque across orgs
 
 ---
 
@@ -293,8 +300,11 @@ mur-mur-v2/
 │   ├── security/          # NaCl crypto (X25519, XChaCha20, Ed25519), MLS scaffold
 │   ├── mcp-server/        # JSON-RPC MCP stdio server (7 tools)
 │   ├── bridge-telegram/   # Telegram bot adapter
+│   ├── bridge-a2a/        # A2A protocol bridge (skeleton)
 │   ├── bridge-openclaw/   # Legacy OpenClaw package, not on the wake/notify path
 │   ├── bridge-murmur/     # Murmur-to-Murmur federation (stub)
+│   ├── federation/        # org/agent addressing + Ed25519 signed key directory
+│   ├── federation-nats/   # fed.* NATS leaf-node/account subject contract
 │   └── observability/     # Metrics and tracing (scaffold)
 ├── scripts/               # Daemon, invite flow, notification setup, demos
 ├── tests/                 # Unit + integration + smoke tests
@@ -408,10 +418,13 @@ See [protocol-v1.md](docs/protocol-v1.md) for the full specification.
 - [x] Invite-based peer setup — 3 commands, zero JSON editing
 - [x] MCP server with 7 tools — full agent integration
 - [x] `murmur_request` — send-and-wait for autonomous workflows
-- [x] Native wake — Claude asyncRewake and Codex app-server UDS mechanisms
+- [x] Native wake — Claude asyncRewake and Codex app-server UDS, with self-healing thread re-seed (v2.1)
 - [x] Observability dashboard — real-time message flow + 3D visualization
 - [x] Telegram/Discord/WhatsApp notification adapters
 - [x] Dead-letter queue + poison message handling
+- [x] **Optional JetStream durability (v2.1)** — finite `max_deliver`/`ack_wait`, consumer repair, advisory → DLQ; default-OFF, SQLite outbox stays source of truth
+- [x] **Federation primitives (v2.1)** — `org/agentId` addressing (bare ⇒ local), Ed25519-signed key directory with pinned-key verification, `fed.*` NATS leaf-node/account subject contract (E2E-opaque)
+- [x] **A2A interop bridge — skeleton (v2.1)** — terminates the industry-standard A2A protocol into the Murmur mesh
 - [x] SQLite WAL with optimistic locking
 - [x] Systemd + Docker deployment
 
@@ -421,17 +434,18 @@ See [protocol-v1.md](docs/protocol-v1.md) for the full specification.
 - [ ] NATS native request-reply — replace polling with ephemeral inbox subjects
 
 ### Planned (next wave)
+- [ ] Live cross-cluster federation — wire the bridge to a real partner mesh end-to-end (primitives shipped in v2.1)
+- [ ] Live A2A interop — connect a remote A2A agent over HTTP (skeleton shipped in v2.1)
 - [ ] WebSocket transport adapter — browser-based agents
 - [ ] Message streaming — large payload chunking with backpressure
 - [ ] Agent discovery protocol — find peers without manual invite exchange
 - [ ] Reference deployment examples — docker-compose, Kubernetes manifests
-- [ ] Auth/authz model — token-based peer authentication
+- [ ] Auth/authz model — token-based peer authentication (federation roster is the identity layer)
 - [ ] Conformance test suite — integration tests for third-party implementations
 - [ ] Versioned protocol spec — machine-readable schema + compatibility matrix
 
 ### Research
 - [ ] MLS group encryption (RFC 9420) — forward secrecy for multi-agent groups via OpenMLS WASM
-- [ ] Murmur-to-Murmur federation — cross-cluster agent communication via NATS leaf nodes
 
 ---
 
