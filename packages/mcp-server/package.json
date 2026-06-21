@@ -1,15 +1,29 @@
 {
   "name": "@murmurv2/mcp-server",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build"
   },
   "dependencies": {
-    "@murmurv2/core": "0.1.0",
-    "@murmurv2/security": "0.1.0"
-  }
+    "@murmurv2/core": "^0.1.0",
+    "@murmurv2/security": "^0.1.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alexfrmn/mur-mur-v2.git",
+    "directory": "packages/mcp-server"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist/src",
+    "LICENSE"
+  ],
+  "description": "Murmur V2 MCP server — 7 tools for agent-to-agent messaging over the Model Context Protocol."
 }

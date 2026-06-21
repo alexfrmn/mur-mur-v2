@@ -1,11 +1,25 @@
 {
   "name": "@murmurv2/security",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json"
-  }
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alexfrmn/mur-mur-v2.git",
+    "directory": "packages/security"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist/src",
+    "LICENSE"
+  ],
+  "description": "Murmur V2 crypto — X25519 + XChaCha20-Poly1305 + Ed25519 envelope encrypt/sign/verify (MLS scaffold)."
 }

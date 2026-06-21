@@ -1,7 +1,6 @@
 {
   "name": "@murmurv2/federation-nats",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -10,14 +9,29 @@
     "test": "npm run build && node --test test/*.test.mjs",
     "test:fed-live": "npm run build && bash integration/run-fed-live.sh",
     "test:real-mesh-leaf": "npm run build && bash integration/real-mesh-leaf.sh",
-    "test:perm-boundary": "npm run build && bash integration/run-perm-boundary.sh"
+    "test:perm-boundary": "npm run build && bash integration/run-perm-boundary.sh",
+    "prepack": "npm run build"
   },
   "dependencies": {
-    "@murmurv2/core": "file:../core",
-    "@murmurv2/federation": "file:../federation"
+    "@murmurv2/core": "^0.1.0",
+    "@murmurv2/federation": "^0.1.0"
   },
   "devDependencies": {
-    "@murmurv2/security": "file:../security",
+    "@murmurv2/security": "^0.1.0",
     "nats": "^2.28.2"
-  }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alexfrmn/mur-mur-v2.git",
+    "directory": "packages/federation-nats"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist/src",
+    "LICENSE"
+  ],
+  "description": "Murmur V2 federation NATS contract — fed.* subjects + account-config renderer for cross-org leaf-node meshes."
 }
