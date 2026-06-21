@@ -9,11 +9,22 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "composite": true,
+    "baseUrl": ".",
+    "paths": {
+      "@murmurv2/federation": [
+        "../federation/src/index.ts"
+      ]
+    },
     "types": [
       "node"
     ]
   },
   "include": [
     "src"
+  ],
+  "references": [
+    {
+      "path": "../federation"
+    }
   ]
 }

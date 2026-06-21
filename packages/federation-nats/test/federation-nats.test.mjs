@@ -40,9 +40,9 @@ test("round-trips dotted address parts without subject-token ambiguity", () => {
 });
 
 test("rejects wildcard and separator injection in address parts", () => {
-  assert.throws(() => federationMessageSubject("partner/agent.*", "aimindset"), /wildcard-or-separator/);
-  assert.throws(() => federationMessageSubject("partner>/agent", "aimindset"), /wildcard-or-separator/);
-  assert.throws(() => federationMessageSubject("partner/agent/sub", "aimindset"), /federation-address-invalid/);
+  assert.throws(() => federationMessageSubject("partner/agent.*", "aimindset"), /invalid agentId/);
+  assert.throws(() => federationMessageSubject("partner>/agent", "aimindset"), /invalid org/);
+  assert.throws(() => federationMessageSubject("partner/agent/sub", "aimindset"), /nested slash/);
 });
 
 test("routes envelopes without inspecting or mutating ciphertext fields", () => {
