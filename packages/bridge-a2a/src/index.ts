@@ -249,7 +249,6 @@ export class A2AMurmurBridge {
       // .createFromUrl / .createFromAgentCard) can discover where to reach us.
       // jsonRpcHandler is mounted at the server root, so the endpoint == baseUrl.
       url: baseUrl,
-      preferredTransport: "JSONRPC",
       supportedInterfaces: [
         { url: baseUrl, protocolBinding: "JSONRPC", tenant: "", protocolVersion: "1.0" },
       ],
