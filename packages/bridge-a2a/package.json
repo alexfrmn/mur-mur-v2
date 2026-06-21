@@ -7,7 +7,7 @@
   "types": "dist/src/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --test"
+    "test": "npm run build && node --test"
   },
   "dependencies": {
     "@a2a-js/sdk": "1.0.0-alpha.0",
