@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 
 const ensureObject = (value) => (value && typeof value === "object" ? value : {});
-const validMode = (mode) => mode === "persistent" || mode === "stateless" || mode === "codex_app_server";
+const validMode = (mode) => mode === "stateless" || mode === "codex_app_server";
 
 export const normalizeWakeConfig = (config = {}) => {
   const wake = ensureObject(config.wake);
@@ -12,7 +12,6 @@ export const normalizeWakeConfig = (config = {}) => {
       const value = ensureObject(peer);
       return [agentId, {
         mode: validMode(value.mode) ? value.mode : undefined,
-        target: typeof value.target === "string" && value.target.trim() ? value.target.trim() : undefined,
         socketPath: typeof value.socketPath === "string" && value.socketPath.trim() ? value.socketPath.trim() : undefined,
         threadId: typeof value.threadId === "string" && value.threadId.trim() ? value.threadId.trim() : undefined,
       }];
@@ -30,18 +29,6 @@ export const normalizeWakeConfig = (config = {}) => {
       maxWakes: Number.isFinite(Number(loopBreaker.maxWakes)) ? Number(loopBreaker.maxWakes) : 5,
       windowMs: Number.isFinite(Number(loopBreaker.windowMs)) ? Number(loopBreaker.windowMs) : 60000,
     },
-  };
-};
-
-export const createTmuxInjector = ({ exec = execFile, log = () => {} } = {}) => {
-  const run = (args) => new Promise((resolve, reject) => {
-    exec("tmux", args, (err) => err ? reject(err) : resolve());
-  });
-  return async (payload, peer) => {
-    if (!peer?.target) throw new Error(`wake-persistent-target-missing:${payload.from}`);
-    await run(["send-keys", "-t", peer.target, "-l", payload.text]);
-    await run(["send-keys", "-t", peer.target, "Enter"]);
-    log("info", "WakeMonitor persistent injected", { msgId: payload.msgId, target: peer.target });
   };
 };
 
@@ -180,10 +167,10 @@ export class WakeMonitor {
 
     try {
       const peer = this.peerFor(payload);
-      if (peer.mode === "persistent" || peer.mode === "codex_app_server") {
-        if (!this.injector) throw new Error(`wake-persistent-injector-missing:${payload.from}`);
+      if (peer.mode === "codex_app_server") {
+        if (!this.injector) throw new Error(`wake-native-injector-missing:${payload.from}`);
         await this.injector(payload, peer);
-        this.log("info", "WakeMonitor persistent wake completed", { msgId: payload.msgId, conversationId: payload.conversationId, target: peer.target });
+        this.log("info", "WakeMonitor native wake completed", { msgId: payload.msgId, conversationId: payload.conversationId, mode: peer.mode });
       } else {
         if (this.hook) await this.hook(payload);
         this.log("info", "WakeMonitor hook completed", { msgId: payload.msgId, conversationId: payload.conversationId });

@@ -50,7 +50,7 @@ Codex runtime facts verified against Codex CLI `0.141.0`:
 - `codex app-server generate-ts --experimental` exposes JSON-RPC method
   `turn/start` with `TurnStartParams { threadId, input }`.
 
-Configure a Codex peer as a persistent app-server wake target:
+Configure a Codex peer as an app-server wake target:
 
 ```json
 {
@@ -81,6 +81,9 @@ The daemon sends:
 
 If the Unix socket or live `threadId` is absent, wake fails loud in daemon logs
 instead of silently falling back to polling.
+
+The previous `persistent` tmux backend has been removed from the wake path.
+Native wake modes are `stateless` shell hooks and `codex_app_server`.
 
 ## Why not tmux / OpenClaw
 

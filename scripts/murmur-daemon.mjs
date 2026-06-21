@@ -2,18 +2,16 @@
 /**
  * murmur-daemon.mjs — Persistent agent-to-agent messaging daemon.
  */
-import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { NatsBroker } from "@murmurv2/broker-nats";
 import { SQLiteDedupeOutboxStore, SQLiteMessageStore } from "@murmurv2/core";
-import { decryptPayload, encryptPayload, signEnvelope, verifyEnvelopeSignature } from "@murmurv2/security";
+import { decryptPayload, verifyEnvelopeSignature } from "@murmurv2/security";
 import { NotifyQueue, flushNotifyQueue, normalizeNotifyTargets } from "./notify-router.mjs";
-import { OpenClawBridgeQueue, flushOpenClawBridgeQueue, normalizeOpenClawTargets } from "./openclaw-bridge.mjs";
 import { createCodexAppServerInjector } from "./codex-app-server-wake.mjs";
-import { WakeMonitor, createAuditShellHook, createShellHook, createTmuxInjector, normalizeWakeConfig } from "./wake-monitor.mjs";
+import { WakeMonitor, createAuditShellHook, createShellHook, normalizeWakeConfig } from "./wake-monitor.mjs";
 // vault-guard: optional content policy hook (not included in OSS release)
 
 const log = (level, msg, data) => {
@@ -36,13 +34,6 @@ try {
 const { agentId, natsUrl, natsToken, subject, peers, keys } = config;
 const dbPath = path.join(dataDir, "murmur.db");
 const flushIntervalMs = Number(process.env.FLUSH_INTERVAL_MS) || 2000;
-let openclawFlushLock = false;
-const guardedFlushOpenClaw = async (opts) => {
-  if (openclawFlushLock) return 0;
-  openclawFlushLock = true;
-  try { return await flushOpenClawBridgeQueue(opts); }
-  finally { openclawFlushLock = false; }
-};
 const notifyTargets = normalizeNotifyTargets(config.notify);
 const envTelegramFallback = (() => {
   const botToken = process.env.MURMUR_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
@@ -52,9 +43,7 @@ const envTelegramFallback = (() => {
   return [{ type: "telegram", channel: "telegram", botToken, chatId, ...(topicId ? { topicId } : {}) }];
 })();
 const effectiveNotifyTargets = notifyTargets.length > 0 ? notifyTargets : envTelegramFallback;
-const openclawTargets = normalizeOpenClawTargets(config.notify);
 const notifyQueue = new NotifyQueue(dbPath);
-const openclawQueue = new OpenClawBridgeQueue(dbPath);
 const wakeDb = new DatabaseSync(dbPath);
 const wakeConfig = normalizeWakeConfig(config);
 
@@ -66,7 +55,6 @@ log("info", "Daemon starting", {
   flushIntervalMs,
   notifyTargets: effectiveNotifyTargets.map((t) => `${t.type}:${t.channel}`),
   notifyFallbackFromEnv: envTelegramFallback.length > 0,
-  openclawTargets: openclawTargets.map((t) => `openclaw:${t.channel}`),
 });
 
 const store = new SQLiteDedupeOutboxStore(dbPath);
@@ -128,7 +116,7 @@ const wakeMonitor = new WakeMonitor({
     if (peer.mode === "codex_app_server") {
       return createCodexAppServerInjector({ log })(payload, peer);
     }
-    return createTmuxInjector({ log })(payload, peer);
+    throw new Error(`wake-native-mode-unsupported:${peer.mode}`);
   },
   notify: enqueueWakeNotification,
   log,
@@ -143,7 +131,7 @@ const proxyWakeMonitor = new WakeMonitor({
     if (peer.mode === "codex_app_server") {
       return createCodexAppServerInjector({ log })(payload, peer);
     }
-    return createTmuxInjector({ log })(payload, peer);
+    throw new Error(`wake-native-mode-unsupported:${peer.mode}`);
   },
   notify: enqueueWakeNotification,
   log,
@@ -159,44 +147,6 @@ const stableEnvelopePayload = (envelope) => JSON.stringify({
   payloadCiphertext: envelope.payloadCiphertext,
   payloadNonce: envelope.payloadNonce,
 });
-
-/**
- * Send a reply back to the original sender via Murmur (encrypt + sign + enqueue to outbox).
- * Used by OpenClaw bridge when replyViaMurmur is enabled.
- */
-const sendReply = async (originalPayload, responseText) => {
-  const to = originalPayload.from;
-  const peer = peers[to];
-  if (!peer) {
-    log("warn", "Cannot reply — unknown peer", { to });
-    return;
-  }
-
-  const msgId = randomUUID();
-  const conversationId = originalPayload.conversationId || `dm:${agentId}:${to}`;
-  const createdAt = new Date().toISOString();
-
-  const encrypted = await encryptPayload(responseText, peer.encryption.publicKey, keys.encryption.privateKey);
-
-  const envelope = {
-    schemaVersion: "1.0",
-    msgId,
-    conversationId,
-    senderAgentId: agentId,
-    recipients: [to],
-    createdAt,
-    payloadCiphertext: encrypted.ciphertext,
-    payloadNonce: encrypted.nonce,
-    signature: "",
-  };
-
-  envelope.signature = await signEnvelope(stableEnvelopePayload(envelope), keys.signing.privateKey);
-
-  await store.enqueue(peer.subject, envelope);
-  await msgStore.append({ conversationId, msgId, direction: "outbound", sender: agentId, text: responseText, createdAt, transport: "nats" });
-
-  log("info", "Reply enqueued to outbox", { to, msgId, conversationId, textLen: responseText.length });
-};
 
 const onMessage = async (envelope) => {
   const senderId = envelope.senderAgentId;
@@ -243,15 +193,6 @@ const onMessage = async (envelope) => {
     cursor: inboundCursorForMsg(envelope.msgId),
   };
 
-  if (openclawTargets.length > 0) {
-    openclawQueue.enqueueMessage(payload, openclawTargets);
-    log("info", "OpenClaw bridge queued", {
-      msgId: envelope.msgId,
-      targetCount: openclawTargets.length,
-    });
-    await guardedFlushOpenClaw({ queue: openclawQueue, log, limit: 20, onResponse: sendReply });
-  }
-
   if (effectiveNotifyTargets.length > 0) {
     notifyQueue.enqueueMessage(payload, effectiveNotifyTargets);
     log("info", "Notifications queued", {
@@ -271,12 +212,6 @@ const flushLoop = async () => {
       await broker.flushOutbox({ outbox: store, maxAttempts: 5, ackTimeoutMs: 15_000 });
     } catch (err) {
       log("error", "Outbox flush error", { error: err.message });
-    }
-
-    try {
-      await guardedFlushOpenClaw({ queue: openclawQueue, log, limit: 100, onResponse: sendReply });
-    } catch (err) {
-      log("error", "OpenClaw bridge flush error", { error: err.message });
     }
 
     try {
@@ -332,12 +267,6 @@ try {
 
   await broker.startAckCorrelation({ outbox: store, ackSubject: `ack.${agentId}` });
   log("info", "ACK correlation started", { ackSubject: `ack.${agentId}` });
-
-  const pendingBridge = openclawQueue.pendingCount();
-  if (pendingBridge > 0) {
-    log("info", "Resuming pending OpenClaw bridge dispatches", { pendingBridge });
-    await guardedFlushOpenClaw({ queue: openclawQueue, log, limit: 250, onResponse: sendReply });
-  }
 
   const pendingNotify = notifyQueue.pendingCount();
   if (pendingNotify > 0) {

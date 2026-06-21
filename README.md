@@ -206,7 +206,7 @@ This enables **fully autonomous overnight work** — launch 2-3 agents, they col
 - **MCP Server** — 7 tools for any MCP-compatible AI client
 - **`murmur_request`** — send-and-wait: no more manual polling
 - **Invite Flow** — 3 commands to connect two agents, zero JSON editing
-- **OpenClaw Bridge** — route messages through LLM agents for autonomous processing
+- **Native Wake** — route agent wakeups through Claude asyncRewake or Codex app-server UDS
 - **Telegram Notifications** — get notified when agents talk
 
 ### Operations
@@ -282,7 +282,7 @@ mur-mur-v2/
 │   ├── security/          # NaCl crypto (X25519, XChaCha20, Ed25519), MLS scaffold
 │   ├── mcp-server/        # JSON-RPC MCP stdio server (7 tools)
 │   ├── bridge-telegram/   # Telegram bot adapter
-│   ├── bridge-openclaw/   # OpenClaw CLI dispatch bridge
+│   ├── bridge-openclaw/   # Legacy OpenClaw package, not on the wake/notify path
 │   ├── bridge-murmur/     # Murmur-to-Murmur federation (stub)
 │   └── observability/     # Metrics and tracing (scaffold)
 ├── scripts/               # Daemon, invite flow, notification setup, demos
@@ -307,37 +307,17 @@ See [ADR-001](docs/ADR-001-core-bus-nats.md) and [ADR-002](docs/ADR-002-envelope
 
 ---
 
-## OpenClaw Integration
+## Native Wake
 
-Murmur V2 can route messages through [OpenClaw](https://github.com/open-claw/openclaw) agents. When a message arrives, the daemon dispatches it to an OpenClaw agent (Claude, GPT, etc.) and sends the response back over Murmur.
+Murmur V2 wakes agents through native runtime mechanisms instead of tmux or
+OpenClaw:
 
-```
-Agent A → Murmur → NATS → Daemon B → OpenClaw CLI → GPT-5 → response → NATS → Agent A
-```
+- Claude Code: `asyncRewake` hook via `scripts/wake-drain-claude.sh`.
+- Codex CLI: app-server Unix socket JSON-RPC `turn/start` via
+  `scripts/codex-app-server-wake.mjs`.
+- Human notification remains on Telegram/webhook notify queues.
 
-This means you can see the full reasoning chain: what the model thought, what tools it used, and what it replied.
-
-### Setup
-
-```bash
-export MURMUR_OPENCLAW_SESSION_ID="your-session-id"
-node scripts/murmur-openclaw-init.mjs
-
-# Or use the preset:
-node scripts/murmur-notify-init.mjs openclaw
-```
-
-### Autonomous Agent Teams
-
-With `murmur_request` + OpenClaw bridge, you can run autonomous agent teams overnight:
-
-1. **Agent A** (Claude) sends a code review request via `murmur_request`
-2. **Murmur** encrypts, signs, and delivers to Agent B's daemon
-3. **Agent B's daemon** dispatches to OpenClaw → GPT-5 processes the review
-4. **Response** flows back through Murmur, encrypted
-5. **Agent A** receives the reply automatically (no human relay)
-
-All messages are E2E encrypted. All responses are logged in SQLite.
+See `docs/wake-native.md`.
 
 ---
 
@@ -369,8 +349,6 @@ node scripts/murmur-notify-init.mjs telegram
 # Discord
 node scripts/murmur-notify-init.mjs discord
 
-# OpenClaw auto-bridge
-node scripts/murmur-notify-init.mjs openclaw
 ```
 
 ---
@@ -378,10 +356,9 @@ node scripts/murmur-notify-init.mjs openclaw
 ## Testing
 
 ```bash
-npm test                          # Build + all unit tests (44 tests)
+npm test                          # Build + all unit tests (41 tests)
 npm run test:integration          # ACK correlation integration
 npm run test:notify-smoke         # Notification adapter smoke
-npm run test:openclaw-bridge-smoke # OpenClaw bridge smoke
 
 # One-command secure E2E demo
 npm run demo:secure
@@ -420,7 +397,7 @@ See [protocol-v1.md](docs/protocol-v1.md) for the full specification.
 - [x] Invite-based peer setup — 3 commands, zero JSON editing
 - [x] MCP server with 7 tools — full agent integration
 - [x] `murmur_request` — send-and-wait for autonomous workflows
-- [x] OpenClaw bridge — route messages through LLM agents
+- [x] Native wake — Claude asyncRewake and Codex app-server UDS mechanisms
 - [x] Observability dashboard — real-time message flow + 3D visualization
 - [x] Telegram/Discord/WhatsApp notification adapters
 - [x] Dead-letter queue + poison message handling
