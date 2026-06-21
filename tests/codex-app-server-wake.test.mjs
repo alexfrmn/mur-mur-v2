@@ -31,7 +31,6 @@ test("normalizeWakeConfig accepts Codex app-server peer settings", () => {
 
   assert.deepEqual(config.peers["agent-jarvis"], {
     mode: "codex_app_server",
-    target: undefined,
     socketPath: "/tmp/codex.sock",
     threadId: "thread-1",
   });
