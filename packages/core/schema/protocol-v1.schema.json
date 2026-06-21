@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/alexfrmn/mur-mur-v2/schema/protocol-v1.schema.json",
+  "title": "Murmur V2 Protocol v1 — EnvelopeV1 (canonical inbound-envelope schema)",
+  "description": "Machine-readable schema for the Murmur V2 wire protocol (schemaVersion 1.0). The document ROOT validates an EnvelopeV1 (the canonical inbound-message target), via $ref to #/$defs/EnvelopeV1. Validate ACKs against #/$defs/AckV1. Mirrors the runtime guard isEnvelopeV1 in @murmurv2/core. Unknown top-level fields are permitted for forward compatibility (consumers ignore them).",
+  "$ref": "#/$defs/EnvelopeV1",
+  "$defs": {
+    "EnvelopeV1": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "msgId",
+        "conversationId",
+        "senderAgentId",
+        "recipients",
+        "createdAt",
+        "payloadCiphertext",
+        "payloadNonce",
+        "signature"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "1.0" },
+        "msgId": { "type": "string", "minLength": 1 },
+        "conversationId": { "type": "string", "minLength": 1 },
+        "senderAgentId": { "type": "string", "minLength": 1 },
+        "recipients": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "ttlSeconds": { "type": "number" },
+        "traceId": { "type": "string" },
+        "sequence": { "type": "number" },
+        "parentMsgId": { "type": "string" },
+        "payloadCiphertext": { "type": "string", "minLength": 1 },
+        "payloadNonce": { "type": "string", "minLength": 1 },
+        "signature": { "type": "string", "minLength": 1 }
+      }
+    },
+    "AckV1": {
+      "type": "object",
+      "required": ["msgId", "consumerId", "status", "at"],
+      "properties": {
+        "msgId": { "type": "string", "minLength": 1 },
+        "consumerId": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["ack", "nack"] },
+        "reason": { "type": "string" },
+        "at": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}
