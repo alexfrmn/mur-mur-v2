@@ -1,4 +1,14 @@
-import { connect, type ConnectionOptions, type NatsConnection, StringCodec, type Subscription } from "nats";
+import {
+  AckPolicy,
+  connect,
+  DeliverPolicy,
+  type ConnectionOptions,
+  type JetStreamClient,
+  type JetStreamManager,
+  type NatsConnection,
+  StringCodec,
+  type Subscription,
+} from "nats";
 import {
   applyJitter,
   computeBackoffMs,
@@ -14,7 +24,9 @@ import {
 
 export interface BrokerConfig {
   url: string;
+  jetstream?: boolean;
   stream?: string;
+  streamSubjects?: string[];
   token?: string;
   connectMaxAttempts?: number;
   connectBaseBackoffMs?: number;
@@ -29,6 +41,7 @@ export interface BrokerConfig {
 }
 
 export type MessageHandler = (envelope: EnvelopeV1) => Promise<void>;
+export type BrokerSubscription = Subscription | { unsubscribe(): void | Promise<void> };
 
 export interface BrokerStatusEvent {
   type: string;
@@ -49,6 +62,8 @@ export const buildNatsConnectionOptions = (config: BrokerConfig): ConnectionOpti
 
 export class NatsBroker {
   private nc?: NatsConnection;
+  private js?: JetStreamClient;
+  private jsm?: JetStreamManager;
   private readonly sc = StringCodec();
   private readonly failedDeliveries = new Map<string, number>();
   private reconnects = 0;
@@ -57,7 +72,10 @@ export class NatsBroker {
   constructor(private readonly config: BrokerConfig) {}
 
   async connect(): Promise<void> {
-    if (this.nc) return;
+    if (this.nc) {
+      await this.ensureJetStream();
+      return;
+    }
 
     const maxAttempts = this.config.connectMaxAttempts ?? 5;
     const baseBackoffMs = this.config.connectBaseBackoffMs ?? 250;
@@ -68,6 +86,7 @@ export class NatsBroker {
       try {
         this.nc = await connect(buildNatsConnectionOptions(this.config));
         this.startStatusLoop(this.nc);
+        await this.ensureJetStream();
         return;
       } catch (err) {
         lastErr = err;
@@ -88,6 +107,46 @@ export class NatsBroker {
 
   getReconnectCount(): number {
     return this.reconnects;
+  }
+
+  private jetStreamEnabled(): boolean {
+    return this.config.jetstream === true || !!this.config.stream;
+  }
+
+  private streamName(): string {
+    return this.config.stream ?? "MURMUR";
+  }
+
+  private streamSubjects(): string[] {
+    return this.config.streamSubjects ?? ["msg.>", "ack.>"];
+  }
+
+  private async ensureJetStream(): Promise<void> {
+    if (!this.jetStreamEnabled() || !this.nc) return;
+    if (this.js && this.jsm) return;
+
+    this.jsm = await this.nc.jetstreamManager();
+    const stream = this.streamName();
+    const subjects = this.streamSubjects();
+
+    try {
+      const info = await this.jsm.streams.info(stream);
+      const currentSubjects = new Set(info.config.subjects ?? []);
+      const missingSubjects = subjects.filter((subject) => !currentSubjects.has(subject));
+      if (missingSubjects.length > 0) {
+        await this.jsm.streams.update(stream, {
+          ...info.config,
+          subjects: [...currentSubjects, ...missingSubjects],
+        });
+      }
+    } catch {
+      await this.jsm.streams.add({
+        name: stream,
+        subjects,
+      });
+    }
+
+    this.js = this.nc.jetstream();
   }
 
   private startStatusLoop(nc: NatsConnection): void {
@@ -115,12 +174,133 @@ export class NatsBroker {
       throw new Error(`policy-rejected:${violations.join("|")}`);
     }
     await this.connect();
-    this.nc!.publish(subject, this.sc.encode(JSON.stringify(envelope)));
+    const payload = this.sc.encode(JSON.stringify(envelope));
+    if (this.js) {
+      await this.js.publish(subject, payload, { msgID: envelope.msgId });
+      return;
+    }
+    this.nc!.publish(subject, payload);
   }
 
   async publishAck(subject: string, envelope: ReturnType<typeof createAck>): Promise<void> {
     await this.connect();
-    this.nc!.publish(subject, this.sc.encode(JSON.stringify(envelope)));
+    const payload = this.sc.encode(JSON.stringify(envelope));
+    if (this.js) {
+      await this.js.publish(subject, payload, {
+        msgID: `ack:${envelope.msgId}:${envelope.consumerId}:${envelope.status}`,
+      });
+      return;
+    }
+    this.nc!.publish(subject, payload);
+  }
+
+  private async processEnvelopeFrame(
+    data: Uint8Array,
+    params: {
+      consumerId: string;
+      dedupe: DedupeStore;
+      onMessage: MessageHandler;
+      maxPoisonAttempts?: number;
+    },
+  ): Promise<void> {
+    let msgId = "unknown";
+    let ackSubject = `ack.${params.consumerId}`;
+    try {
+      const decoded = JSON.parse(this.sc.decode(data));
+      if (!isEnvelopeV1(decoded)) {
+        await this.publishAck(ackSubject, createAck("unknown", params.consumerId, "nack", "invalid-envelope"));
+        return;
+      }
+
+      msgId = decoded.msgId;
+      ackSubject = `ack.${decoded.senderAgentId}`;
+      const isDup = await params.dedupe.seen(decoded.msgId, params.consumerId);
+      if (isDup) {
+        await this.publishAck(ackSubject, createAck(decoded.msgId, params.consumerId, "ack", "duplicate-ignored"));
+        return;
+      }
+
+      await params.onMessage(decoded);
+      await params.dedupe.markSeen(decoded.msgId, params.consumerId);
+      this.failedDeliveries.delete(`${params.consumerId}:${decoded.msgId}`);
+      await this.publishAck(ackSubject, createAck(decoded.msgId, params.consumerId, "ack"));
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : "handler-failed";
+      const maxPoisonAttempts = params.maxPoisonAttempts ?? 3;
+      const key = `${params.consumerId}:${msgId}`;
+      const failures = (this.failedDeliveries.get(key) ?? 0) + 1;
+      this.failedDeliveries.set(key, failures);
+      if (msgId !== "unknown" && failures >= maxPoisonAttempts) {
+        await params.dedupe.markSeen(msgId, params.consumerId);
+        this.failedDeliveries.delete(key);
+        await this.publishAck(ackSubject, createAck(msgId, params.consumerId, "nack", `poison-message:${reason}`));
+        return;
+      }
+      await this.publishAck(ackSubject, createAck(msgId, params.consumerId, "nack", reason));
+    }
+  }
+
+  private async ensureJetStreamConsumer(subject: string, durableName: string): Promise<void> {
+    if (!this.jsm) throw new Error("jetstream-manager-unavailable");
+    const stream = this.streamName();
+    try {
+      const info = await this.jsm.consumers.info(stream, durableName);
+      const filterSubject = info.config.filter_subject;
+      if (filterSubject && filterSubject !== subject) {
+        throw new Error(`jetstream-consumer-filter-mismatch:${durableName}:${filterSubject}:${subject}`);
+      }
+      return;
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith("jetstream-consumer-filter-mismatch:")) {
+        throw err;
+      }
+      await this.jsm.consumers.add(stream, {
+        durable_name: durableName,
+        name: durableName,
+        filter_subject: subject,
+        ack_policy: AckPolicy.Explicit,
+        deliver_policy: DeliverPolicy.All,
+      });
+    }
+  }
+
+  private async consumeJetStream(
+    subject: string,
+    durableName: string,
+    onMessage: (data: Uint8Array) => Promise<void>,
+  ): Promise<BrokerSubscription> {
+    await this.ensureJetStreamConsumer(subject, durableName);
+    if (!this.js) throw new Error("jetstream-client-unavailable");
+
+    const consumer = await this.js.consumers.get(this.streamName(), durableName);
+    const messages = await consumer.consume();
+
+    (async () => {
+      for await (const m of messages) {
+        try {
+          await onMessage(m.data);
+          m.ack();
+        } catch (err) {
+          m.nak();
+          const e = err instanceof Error ? err : new Error(String(err));
+          console.error("[NatsBroker.consumeJetStream] message failed", {
+            subject,
+            durableName,
+            message: e.message,
+            stack: e.stack,
+          });
+        }
+      }
+    })().catch((err) => {
+      const e = err instanceof Error ? err : new Error(String(err));
+      console.error("[NatsBroker.consumeJetStream] loop crashed", { subject, durableName, message: e.message, stack: e.stack });
+    });
+
+    return {
+      unsubscribe: () => {
+        void messages.close();
+      },
+    };
   }
 
   async subscribeWithAck(params: {
@@ -129,48 +309,18 @@ export class NatsBroker {
     dedupe: DedupeStore;
     onMessage: MessageHandler;
     maxPoisonAttempts?: number;
-  }): Promise<Subscription> {
+  }): Promise<BrokerSubscription> {
     await this.connect();
+
+    if (this.js) {
+      return this.consumeJetStream(params.subject, params.consumerId, (data) => this.processEnvelopeFrame(data, params));
+    }
 
     const sub = this.nc!.subscribe(params.subject);
 
     (async () => {
       for await (const m of sub) {
-        let msgId = "unknown";
-        let ackSubject = `ack.${params.consumerId}`;
-        try {
-          const decoded = JSON.parse(this.sc.decode(m.data));
-          if (!isEnvelopeV1(decoded)) {
-            await this.publishAck(ackSubject, createAck("unknown", params.consumerId, "nack", "invalid-envelope"));
-            continue;
-          }
-
-          msgId = decoded.msgId;
-          ackSubject = `ack.${decoded.senderAgentId}`;
-          const isDup = await params.dedupe.seen(decoded.msgId, params.consumerId);
-          if (isDup) {
-            await this.publishAck(ackSubject, createAck(decoded.msgId, params.consumerId, "ack", "duplicate-ignored"));
-            continue;
-          }
-
-          await params.onMessage(decoded);
-          await params.dedupe.markSeen(decoded.msgId, params.consumerId);
-          this.failedDeliveries.delete(`${params.consumerId}:${decoded.msgId}`);
-          await this.publishAck(ackSubject, createAck(decoded.msgId, params.consumerId, "ack"));
-        } catch (err) {
-          const reason = err instanceof Error ? err.message : "handler-failed";
-          const maxPoisonAttempts = params.maxPoisonAttempts ?? 3;
-          const key = `${params.consumerId}:${msgId}`;
-          const failures = (this.failedDeliveries.get(key) ?? 0) + 1;
-          this.failedDeliveries.set(key, failures);
-          if (msgId !== "unknown" && failures >= maxPoisonAttempts) {
-            await params.dedupe.markSeen(msgId, params.consumerId);
-            this.failedDeliveries.delete(key);
-            await this.publishAck(ackSubject, createAck(msgId, params.consumerId, "nack", `poison-message:${reason}`));
-            continue;
-          }
-          await this.publishAck(ackSubject, createAck(msgId, params.consumerId, "nack", reason));
-        }
+        await this.processEnvelopeFrame(m.data, params);
       }
     })().catch((err) => {
       const e = err instanceof Error ? err : new Error(String(err));
@@ -183,36 +333,22 @@ export class NatsBroker {
   async startAckCorrelation(params: {
     outbox: OutboxStore;
     ackSubject: string;
-  }): Promise<Subscription> {
+    consumerId?: string;
+  }): Promise<BrokerSubscription> {
     await this.connect();
+
+    if (this.js) {
+      const consumerId = params.consumerId ?? `${params.ackSubject.replaceAll(".", "-")}-consumer`;
+      return this.consumeJetStream(params.ackSubject, consumerId, async (data) => {
+        await this.processAckFrame(data, params.outbox);
+      });
+    }
+
     const sub = this.nc!.subscribe(params.ackSubject);
 
     (async () => {
       for await (const m of sub) {
-        try {
-          const decoded = JSON.parse(this.sc.decode(m.data)) as AckV1;
-          if (typeof decoded.msgId !== "string" || decoded.msgId.length === 0) continue;
-
-          if (decoded.status === "ack") {
-            await params.outbox.markAcked(decoded.msgId);
-            continue;
-          }
-
-          if (decoded.status === "nack") {
-            await params.outbox.markFailed(
-              decoded.msgId,
-              decoded.reason ?? "nack",
-              new Date().toISOString(),
-            );
-          }
-        } catch (err) {
-          const e = err instanceof Error ? err : new Error(String(err));
-          console.error("[NatsBroker.startAckCorrelation] malformed ack frame", {
-            message: e.message,
-            stack: e.stack,
-            raw: this.sc.decode(m.data),
-          });
-        }
+        await this.processAckFrame(m.data, params.outbox);
       }
     })().catch((err) => {
       const e = err instanceof Error ? err : new Error(String(err));
@@ -220,6 +356,33 @@ export class NatsBroker {
     });
 
     return sub;
+  }
+
+  private async processAckFrame(data: Uint8Array, outbox: OutboxStore): Promise<void> {
+    try {
+      const decoded = JSON.parse(this.sc.decode(data)) as AckV1;
+      if (typeof decoded.msgId !== "string" || decoded.msgId.length === 0) return;
+
+      if (decoded.status === "ack") {
+        await outbox.markAcked(decoded.msgId);
+        return;
+      }
+
+      if (decoded.status === "nack") {
+        await outbox.markFailed(
+          decoded.msgId,
+          decoded.reason ?? "nack",
+          new Date().toISOString(),
+        );
+      }
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err));
+      console.error("[NatsBroker.startAckCorrelation] malformed ack frame", {
+        message: e.message,
+        stack: e.stack,
+        raw: this.sc.decode(data),
+      });
+    }
   }
 
   /**
