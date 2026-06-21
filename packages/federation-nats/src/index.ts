@@ -23,6 +23,41 @@ export interface FederationAccountContract {
   imports: FederationImport[];
 }
 
+export interface FederationNatsUser {
+  user: string;
+  password: string;
+}
+
+export interface FederationNatsServiceExport {
+  service: string;
+  accounts?: string[];
+}
+
+export interface FederationNatsServiceImport {
+  service: FederationImport;
+}
+
+export interface FederationNatsAccountConfig {
+  account: string;
+  users: FederationNatsUser[];
+  exports: FederationNatsServiceExport[];
+  imports: FederationNatsServiceImport[];
+}
+
+export interface BuildFederationNatsAccountConfigOptions {
+  localOrg: string;
+  partnerOrgs?: string[];
+  users?: FederationNatsUser[];
+  privateExports?: boolean;
+}
+
+export interface RenderFederationNatsAccountsConfigOptions {
+  orgs: string[];
+  port?: number | string;
+  usersByOrg?: Record<string, FederationNatsUser[]>;
+  privateExports?: boolean;
+}
+
 const FEDERATION_PREFIX = "fed";
 const ENCODED_PREFIX = "_x";
 const RAW_TOKEN_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -125,4 +160,66 @@ export const buildFederationAccountContract = (
       subject: `${FEDERATION_PREFIX}.${encodeFederationToken(partnerOrg)}.>`,
     })),
   };
+};
+
+const quoteNatsString = (value: string): string => JSON.stringify(value);
+
+export const buildFederationNatsAccountConfig = ({
+  localOrg,
+  partnerOrgs = [],
+  users = [{ user: localOrg, password: `pw_${localOrg}` }],
+  privateExports = true,
+}: BuildFederationNatsAccountConfigOptions): FederationNatsAccountConfig => {
+  const contract = buildFederationAccountContract(localOrg, partnerOrgs);
+  const partnerAccounts = partnerOrgs.map(orgAccountName);
+  return {
+    account: contract.localAccount,
+    users,
+    exports: contract.exports.map((service) => ({
+      service,
+      ...(privateExports ? { accounts: partnerAccounts } : {}),
+    })),
+    imports: contract.imports.map((service) => ({ service })),
+  };
+};
+
+export const renderFederationNatsAccountsConfig = ({
+  orgs,
+  port = 14333,
+  usersByOrg = {},
+  privateExports = true,
+}: RenderFederationNatsAccountsConfigOptions): string => {
+  if (!Array.isArray(orgs) || orgs.length === 0) throw new Error("orgs-missing");
+  const lines = [`port: ${port}`, "accounts {"];
+  for (const org of orgs) {
+    const partners = orgs.filter((o) => o !== org);
+    const account = buildFederationNatsAccountConfig({
+      localOrg: org,
+      partnerOrgs: partners,
+      users: usersByOrg[org] ?? [{ user: org, password: `pw_${org}` }],
+      privateExports,
+    });
+    lines.push(`  ${account.account} {`);
+    lines.push(`    users: [`);
+    for (const user of account.users) {
+      lines.push(`      { user: ${quoteNatsString(user.user)}, password: ${quoteNatsString(user.password)} }`);
+    }
+    lines.push(`    ]`);
+    lines.push(`    exports: [`);
+    for (const ex of account.exports) {
+      const accounts = ex.accounts ? `, accounts: [${ex.accounts.map(quoteNatsString).join(", ")}]` : "";
+      lines.push(`      { service: ${quoteNatsString(ex.service)}${accounts} }`);
+    }
+    lines.push(`    ]`);
+    lines.push(`    imports: [`);
+    for (const im of account.imports) {
+      lines.push(
+        `      { service: { account: ${quoteNatsString(im.service.account)}, subject: ${quoteNatsString(im.service.subject)} } }`,
+      );
+    }
+    lines.push(`    ]`);
+    lines.push(`  }`);
+  }
+  lines.push("}");
+  return `${lines.join("\n")}\n`;
 };
