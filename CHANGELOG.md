@@ -7,9 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-06-21
+
+### Added
+
+- **JetStream durability (opt-in).** Optional NATS JetStream durable consumers behind the existing broker/outbox interface — finite `max_deliver` (default 5) + `ack_wait` (default 30s), automatic repair of drifted consumers, retryable-failure `nak()` for broker redelivery, and poison-message terminal ACK. Default-OFF; enable with `MURMUR_JETSTREAM=1` or `config.jetstream.enabled`. The SQLite outbox remains the transactional source of truth.
+- **JetStream advisory → DLQ.** `startJetStreamAdvisoryDlq` routes `MAX_DELIVERIES` / `MSG_TERMINATED` advisories to the outbox dead-letter sink.
+- **Federation (cross-org).** New `@murmurv2/federation` — `org/agentId` addressing (bare id ⇒ local org) and an Ed25519-signed per-org key directory (roster) — and `@murmurv2/federation-nats` — NATS leaf-node / per-org account `fed.*` subject contract with subject-safe token encoding and account export/import isolation. Payload stays E2E-opaque across federation.
+- **A2A bridge skeleton.** `@murmurv2/bridge-a2a` terminates the industry-standard A2A protocol (`@a2a-js/sdk`) and re-wraps tasks as internal Murmur E2E envelopes.
+- **Native wake self-heal.** Codex app-server wake threads are re-seeded automatically when missing/stale; WS-over-UDS transport for the Codex app-server.
+
 ### Changed
 
 - Wake/notify runtime no longer routes through OpenClaw or tmux persistent injection; native Claude/Codex wake plus Telegram notify are the supported paths.
+
+### Security
+
+- `verifyRoster` verifies a federation roster against a caller-pinned org key, not the roster's own embedded key — prevents an attacker from publishing a self-signed forged roster.
 
 ## [2.0.0] - 2026-06-20
 

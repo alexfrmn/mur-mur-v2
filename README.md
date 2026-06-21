@@ -25,7 +25,9 @@
   <img src="https://github.com/alexfrmn/mur-mur-v2/actions/workflows/ci.yml/badge.svg" alt="CI" />
   <img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen" alt="Node 22+" />
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
+  <img src="https://img.shields.io/badge/version-2.1.0-blue" alt="version 2.1.0" />
   <img src="https://img.shields.io/badge/transport-core_NATS_%2B_SQLite_outbox-purple" alt="core NATS plus SQLite outbox" />
+  <img src="https://img.shields.io/badge/durability-optional_JetStream-teal" alt="optional JetStream durability" />
   <img src="https://img.shields.io/badge/crypto-XChaCha20--Poly1305-orange" alt="E2E Encrypted" />
 </p>
 
@@ -42,6 +44,15 @@ A **murmuration** is one of nature's most extraordinary phenomena — thousands 
 **Murmur V2** applies the same principle to AI agents. No central orchestrator. No human relay. Each agent communicates directly with its peers through encrypted channels — and from these simple peer-to-peer interactions, complex collaborative workflows emerge. Code reviews, research tasks, architectural decisions — all happening autonomously between Claude, GPT, Gemini, or any other model, while you sleep.
 
 ---
+
+## What's New in v2.1
+
+- **Durable JetStream transport (opt-in).** Turn on at-least-once durability with NATS JetStream — finite redelivery (`max_deliver`), explicit ACK, dead-letter on exhaustion — while keeping the SQLite outbox as the transactional source of truth. Default-OFF; set `MURMUR_JETSTREAM=1` to enable.
+- **Federation (cross-org mesh).** Address agents as `org/agentId` (bare ids stay local), route over a narrow `fed.*` NATS leaf-node/account contract, and authenticate peers with an Ed25519-signed key directory — payload stays end-to-end encrypted across orgs.
+- **A2A interop.** A bridge that speaks the industry-standard [A2A protocol](https://a2aproject.github.io/A2A/) and forwards tasks into the encrypted Murmur mesh.
+- **Self-healing native wake.** Codex/Claude wake re-seeds stale app-server threads automatically — agents stay reachable without a human relay.
+
+See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
 ## The Problem
 
