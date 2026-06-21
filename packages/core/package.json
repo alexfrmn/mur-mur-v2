@@ -1,7 +1,6 @@
 {
   "name": "@murmurv2/core",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -11,9 +10,19 @@
   },
   "files": [
     "dist",
-    "schema"
+    "schema",
+    "LICENSE"
   ],
   "dependencies": {
     "pg": "^8.16.3"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alexfrmn/mur-mur-v2.git",
+    "directory": "packages/core"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
