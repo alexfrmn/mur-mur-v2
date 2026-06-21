@@ -54,6 +54,14 @@ export interface BridgeA2AConfig {
   defaultTargetAgentId: string;
   /** HTTP port the A2A server listens on. */
   a2aPort: number;
+  /**
+   * Absolute base URL where this bridge's A2A JSON-RPC endpoint is reachable by
+   * external clients (e.g. "https://a2a.example.com"). Advertised in the Agent
+   * Card's supportedInterfaces so standard A2A clients can discover the transport.
+   * Defaults to http://127.0.0.1:<a2aPort> (local/dev). MUST be set to the public
+   * HTTPS URL in production.
+   */
+  publicUrl?: string;
   /** Ed25519 private key the bridge signs internal envelopes with. */
   signingPrivateKey: string;
   /** X25519 private key the bridge seals outbound / opens inbound replies with. */
@@ -232,10 +240,18 @@ export class A2AMurmurBridge {
   agentCard(): AgentCard {
     // fromJSON fills the protobuf required defaults (supportedInterfaces, security*,
     // signatures, provider) so we only declare the fields we actually populate.
+    const baseUrl = this.config.publicUrl ?? `http://127.0.0.1:${this.config.a2aPort}`;
     return AgentCard.fromJSON({
       name: `murmur-bridge:${this.config.defaultTargetAgentId}`,
       description: "A2A bridge into a private Murmur (E2E/NATS) agent mesh.",
       version: "0.1.0",
+      // Advertise the JSON-RPC transport so standard A2A clients (ClientFactory
+      // .createFromUrl / .createFromAgentCard) can discover where to reach us.
+      // jsonRpcHandler is mounted at the server root, so the endpoint == baseUrl.
+      url: baseUrl,
+      supportedInterfaces: [
+        { url: baseUrl, protocolBinding: "JSONRPC", tenant: "", protocolVersion: "1.0" },
+      ],
       capabilities: { streaming: false }, // TODO(phase2): SSE streaming
       defaultInputModes: ["text/plain"],
       defaultOutputModes: ["text/plain"],
