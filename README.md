@@ -48,9 +48,9 @@ A **murmuration** is one of nature's most extraordinary phenomena — thousands 
 ## What's New in v2.1
 
 - **Durable JetStream transport (opt-in).** Turn on at-least-once durability with NATS JetStream — finite redelivery (`max_deliver`), explicit ACK, dead-letter on exhaustion — while keeping the SQLite outbox as the transactional source of truth. Default-OFF; set `MURMUR_JETSTREAM=1` to enable.
-- **Federation (cross-org mesh).** Address agents as `org/agentId` (bare ids stay local), route over a narrow `fed.*` NATS leaf-node/account contract, and authenticate peers with an Ed25519-signed key directory — payload stays end-to-end encrypted across orgs.
-- **A2A interop.** A bridge that speaks the industry-standard [A2A protocol](https://a2aproject.github.io/A2A/) and forwards tasks into the encrypted Murmur mesh.
-- **Self-healing native wake.** Codex/Claude wake re-seeds stale app-server threads automatically — agents stay reachable without a human relay.
+- **Federation primitives (not yet live).** `org/agentId` addressing (bare ids stay local), an Ed25519-signed key directory, and a narrow `fed.*` NATS leaf-node/account contract — coded and unit-tested. Live cross-org interop is still to come.
+- **A2A bridge skeleton (not yet live).** A bridge scaffolded against the industry-standard [A2A protocol](https://a2aproject.github.io/A2A/) to forward tasks into the Murmur mesh — code + unit tests only; not yet connected to a real A2A agent.
+- **Self-healing native wake.** Codex/Claude wake re-seeds stale app-server threads automatically. Full always-on wake (a persistent live agent session) is still in progress.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
@@ -422,20 +422,18 @@ See [protocol-v1.md](docs/protocol-v1.md) for the full specification.
 - [x] Observability dashboard — real-time message flow + 3D visualization
 - [x] Telegram/Discord/WhatsApp notification adapters
 - [x] Dead-letter queue + poison message handling
-- [x] **Optional JetStream durability (v2.1)** — finite `max_deliver`/`ack_wait`, consumer repair, advisory → DLQ; default-OFF, SQLite outbox stays source of truth
-- [x] **Federation primitives (v2.1)** — `org/agentId` addressing (bare ⇒ local), Ed25519-signed key directory with pinned-key verification, `fed.*` NATS leaf-node/account subject contract (E2E-opaque)
-- [x] **A2A interop bridge — skeleton (v2.1)** — terminates the industry-standard A2A protocol into the Murmur mesh
+- [x] **Optional JetStream durability (v2.1)** — finite `max_deliver`/`ack_wait`, consumer repair, advisory → DLQ; default-OFF, SQLite outbox stays source of truth — **running live on the reference mesh**
 - [x] SQLite WAL with optimistic locking
 - [x] Systemd + Docker deployment
 
 ### In Progress
+- [ ] **Federation (v2.1)** — `org/agentId` addressing + Ed25519 signed key directory + `fed.*` subject contract are coded and unit-tested, but **not yet wired to a live partner mesh** (no two real orgs have federated)
+- [ ] **A2A interop bridge (v2.1)** — skeleton wired against `@a2a-js/sdk` and unit-tested, but **not yet connected to a live A2A agent** (no real A2A task has flowed through it)
 - [x] Prometheus metrics exporter — outbox depth, delivery latency, error rates
 - [ ] npm package publishing — `@murmurv2/*` on npm registry
 - [ ] NATS native request-reply — replace polling with ephemeral inbox subjects
 
 ### Planned (next wave)
-- [ ] Live cross-cluster federation — wire the bridge to a real partner mesh end-to-end (primitives shipped in v2.1)
-- [ ] Live A2A interop — connect a remote A2A agent over HTTP (skeleton shipped in v2.1)
 - [ ] WebSocket transport adapter — browser-based agents
 - [ ] Message streaming — large payload chunking with backpressure
 - [ ] Agent discovery protocol — find peers without manual invite exchange
