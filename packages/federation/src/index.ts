@@ -154,3 +154,64 @@ export function lookupAgentKeys(roster: SignedRoster, agentId: string): AgentKey
   if (!keys) throw new Error(`federation: agent not in roster ${roster.org}: ${agentId}`);
   return keys;
 }
+
+// ──────────────────── Roster store (runtime trust + replay guard) ────────────────────
+
+export type RosterRejectReason = "org-not-pinned" | "signature-invalid" | "stale-or-replay";
+
+export interface RosterOfferResult {
+  accepted: boolean;
+  reason?: RosterRejectReason;
+}
+
+/**
+ * Holds the latest verified roster per org and enforces the production trust model
+ * (the runtime/bridge-layer concern, deliberately NOT in the NATS subject contract):
+ *   - org directory-signing keys are PINNED out-of-band; an embedded
+ *     `signingPublicKey` is never the trust root.
+ *   - a roster is accepted only if it verifies against the pinned key AND its version
+ *     strictly exceeds the last accepted version for that org — so a replayed or
+ *     downgraded roster (lower/equal version) is rejected.
+ */
+export class RosterStore {
+  private readonly pinned: Map<string, string>;
+  private readonly latest = new Map<string, SignedRoster>();
+
+  constructor(pinnedOrgKeys: Record<string, string> | Map<string, string> = {}) {
+    this.pinned =
+      pinnedOrgKeys instanceof Map ? new Map(pinnedOrgKeys) : new Map(Object.entries(pinnedOrgKeys));
+  }
+
+  /** Pin (or re-pin) an org's directory-signing public key (out-of-band trust input). */
+  pin(org: string, signingPublicKey: string): void {
+    this.pinned.set(org, signingPublicKey);
+  }
+
+  /**
+   * Offer a signed roster. Accepted only when it verifies against the pinned org key
+   * and is strictly newer than the last accepted version (monotonic ⇒ no replay).
+   */
+  async offer(roster: SignedRoster): Promise<RosterOfferResult> {
+    const pin = this.pinned.get(roster.org);
+    if (!pin) return { accepted: false, reason: "org-not-pinned" };
+    if (!(await verifyRoster(roster, pin))) return { accepted: false, reason: "signature-invalid" };
+    const current = this.latest.get(roster.org);
+    if (current && roster.version <= current.version) {
+      return { accepted: false, reason: "stale-or-replay" };
+    }
+    this.latest.set(roster.org, roster);
+    return { accepted: true };
+  }
+
+  /** The latest accepted roster for an org, if any. */
+  current(org: string): SignedRoster | undefined {
+    return this.latest.get(org);
+  }
+
+  /** Look up an agent's keys from the latest accepted roster. Throws if none accepted. */
+  agentKeys(org: string, agentId: string): AgentKeys {
+    const roster = this.latest.get(org);
+    if (!roster) throw new Error(`federation: no accepted roster for org ${org}`);
+    return lookupAgentKeys(roster, agentId);
+  }
+}

@@ -7,6 +7,7 @@ import {
   isLocal,
   lookupAgentKeys,
   parseAddress,
+  RosterStore,
   signRoster,
   verifyRoster,
 } from "../dist/src/index.js";
@@ -127,4 +128,70 @@ test("signRoster rejects non-positive version", async () => {
     () => signRoster({ org: "o", version: 0, issuedAt: "t", agents: {} }, sign.privateKey, sign.publicKey),
     /version must be a positive integer/,
   );
+});
+
+// ─── RosterStore (runtime trust + replay guard) ───
+
+async function agentKeyPair() {
+  return {
+    encryptPublicKey: (await createKeyPair()).publicKey,
+    verifyPublicKey: (await createSigningKeyPair()).publicKey,
+  };
+}
+async function makeRoster(org, version, sign, agentKeys) {
+  return signRoster(
+    { org, version, issuedAt: "2026-06-21T00:00:00Z", agents: { "agent-1": agentKeys } },
+    sign.privateKey,
+    sign.publicKey,
+  );
+}
+
+test("RosterStore: rejects an unpinned org", async () => {
+  const sign = await createSigningKeyPair();
+  const store = new RosterStore();
+  const r = await makeRoster("partner", 1, sign, await agentKeyPair());
+  assert.deepEqual(await store.offer(r), { accepted: false, reason: "org-not-pinned" });
+});
+
+test("RosterStore: accepts pinned+valid, rejects a different signing key", async () => {
+  const sign = await createSigningKeyPair();
+  const other = await createSigningKeyPair();
+  const ak = await agentKeyPair();
+  const store = new RosterStore({ partner: sign.publicKey });
+  assert.deepEqual(await store.offer(await makeRoster("partner", 1, sign, ak)), { accepted: true });
+  // signed by a different key but claims org=partner -> pinned mismatch
+  assert.deepEqual(await store.offer(await makeRoster("partner", 2, other, ak)), {
+    accepted: false,
+    reason: "signature-invalid",
+  });
+});
+
+test("RosterStore: enforces monotonic version (replay + downgrade rejected)", async () => {
+  const sign = await createSigningKeyPair();
+  const ak = await agentKeyPair();
+  const store = new RosterStore({ partner: sign.publicKey });
+  assert.deepEqual(await store.offer(await makeRoster("partner", 2, sign, ak)), { accepted: true });
+  assert.deepEqual(await store.offer(await makeRoster("partner", 2, sign, ak)), { accepted: false, reason: "stale-or-replay" });
+  assert.deepEqual(await store.offer(await makeRoster("partner", 1, sign, ak)), { accepted: false, reason: "stale-or-replay" });
+  assert.deepEqual(await store.offer(await makeRoster("partner", 3, sign, ak)), { accepted: true });
+  assert.equal(store.current("partner").version, 3);
+});
+
+test("RosterStore: agentKeys reads the latest accepted roster; throws if none", async () => {
+  const sign = await createSigningKeyPair();
+  const ak = await agentKeyPair();
+  const store = new RosterStore({ partner: sign.publicKey });
+  assert.throws(() => store.agentKeys("partner", "agent-1"), /no accepted roster/);
+  await store.offer(await makeRoster("partner", 1, sign, ak));
+  assert.deepEqual(store.agentKeys("partner", "agent-1"), ak);
+  assert.throws(() => store.agentKeys("partner", "ghost"), /agent not in roster/);
+});
+
+test("RosterStore: pin() can add trust after construction", async () => {
+  const sign = await createSigningKeyPair();
+  const ak = await agentKeyPair();
+  const store = new RosterStore();
+  assert.equal((await store.offer(await makeRoster("partner", 1, sign, ak))).reason, "org-not-pinned");
+  store.pin("partner", sign.publicKey);
+  assert.deepEqual(await store.offer(await makeRoster("partner", 1, sign, ak)), { accepted: true });
 });
