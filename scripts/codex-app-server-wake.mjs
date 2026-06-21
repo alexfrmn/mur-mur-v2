@@ -25,6 +25,29 @@ export const buildTurnStartRequest = ({ id = 1, threadId, text, metadata = {} })
   },
 });
 
+const buildThreadStartParams = () => ({
+  model: null,
+  modelProvider: null,
+  cwd: null,
+  runtimeWorkspaceRoots: null,
+  approvalPolicy: null,
+  approvalsReviewer: null,
+  sandbox: null,
+  permissions: null,
+  config: null,
+  serviceName: null,
+  baseInstructions: null,
+  developerInstructions: null,
+  personality: null,
+  ephemeral: false,
+  sessionStartSource: null,
+  threadSource: null,
+  environments: null,
+  dynamicTools: null,
+  selectedCapabilityRoots: null,
+  mockExperimentalField: null,
+});
+
 const buildInitializeRequest = (id) => ({
   id,
   method: "initialize",
@@ -133,13 +156,11 @@ export class CodexAppServerClient {
 export const createCodexAppServerInjector = ({ Client = CodexAppServerClient, log = () => {}, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) => {
   return async (payload, peer) => {
     const socketPath = peer?.socketPath || peer?.target;
-    const threadId = peer?.threadId;
     if (!socketPath) throw new Error(`codex-app-server-socket-missing:${payload.from}`);
-    if (!threadId) throw new Error(`codex-app-server-thread-missing:${payload.from}`);
 
     const client = new Client({ socketPath, timeoutMs });
     const text = buildCodexTurnText(payload);
-    const result = await client.request("turn/start", {
+    const startTurn = (threadId) => client.request("turn/start", {
       threadId,
       input: [{ type: "text", text, text_elements: [] }],
       responsesapiClientMetadata: {
@@ -148,6 +169,29 @@ export const createCodexAppServerInjector = ({ Client = CodexAppServerClient, lo
         murmur_from: payload.from || "",
       },
     });
+
+    let threadId = peer?.threadId;
+    if (!threadId) {
+      const started = await client.request("thread/start", buildThreadStartParams());
+      threadId = started?.thread?.id;
+      if (!threadId) throw new Error(`codex-app-server-thread-start-missing:${payload.from}`);
+      peer.threadId = threadId;
+      log("info", "Codex app-server wake thread seeded", { msgId: payload.msgId, threadId, socketPath });
+    }
+
+    let result;
+    try {
+      result = await startTurn(threadId);
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err));
+      if (!e.message.startsWith("codex-app-server-error:thread not found:")) throw e;
+      const started = await client.request("thread/start", buildThreadStartParams());
+      threadId = started?.thread?.id;
+      if (!threadId) throw new Error(`codex-app-server-thread-start-missing:${payload.from}`);
+      peer.threadId = threadId;
+      log("info", "Codex app-server wake thread re-seeded", { msgId: payload.msgId, threadId, socketPath });
+      result = await startTurn(threadId);
+    }
     log("info", "Codex app-server wake completed", { msgId: payload.msgId, threadId, socketPath });
     return result;
   };

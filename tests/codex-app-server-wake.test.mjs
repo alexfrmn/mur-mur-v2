@@ -169,9 +169,57 @@ test("WakeMonitor gates Codex app-server wake before injector", async () => {
   assert.deepEqual(injected, [{ msgId: "msg-codex-1", mode: "codex_app_server", threadId: "thread-1" }]);
 });
 
-test("Codex app-server injector fails loud without socket or thread", async () => {
+test("Codex app-server injector re-seeds stale app-server threads", async () => {
+  const calls = [];
+  const logs = [];
+  class FakeClient {
+    async request(method, params) {
+      calls.push({ method, params });
+      if (method === "turn/start" && params.threadId === "stale-thread") {
+        throw new Error("codex-app-server-error:thread not found: stale-thread");
+      }
+      if (method === "thread/start") return { thread: { id: "fresh-thread" } };
+      return { turn: { id: "turn-1" } };
+    }
+  }
+  const peer = { mode: "codex_app_server", socketPath: "/tmp/codex.sock", threadId: "stale-thread" };
+  const injector = createCodexAppServerInjector({
+    Client: FakeClient,
+    log: (level, message, data) => logs.push({ level, message, data }),
+  });
+
+  const result = await injector(payload, peer);
+
+  assert.deepEqual(result, { turn: { id: "turn-1" } });
+  assert.equal(peer.threadId, "fresh-thread");
+  assert.deepEqual(calls.map((call) => call.method), ["turn/start", "thread/start", "turn/start"]);
+  assert.equal(calls[0].params.threadId, "stale-thread");
+  assert.equal(calls[2].params.threadId, "fresh-thread");
+  assert.equal(logs[0].message, "Codex app-server wake thread re-seeded");
+});
+
+test("Codex app-server injector seeds missing app-server threads", async () => {
+  const calls = [];
+  class FakeClient {
+    async request(method, params) {
+      calls.push({ method, params });
+      if (method === "thread/start") return { thread: { id: "fresh-thread" } };
+      return { turn: { id: "turn-1" } };
+    }
+  }
+  const peer = { mode: "codex_app_server", socketPath: "/tmp/codex.sock" };
+  const injector = createCodexAppServerInjector({ Client: FakeClient });
+
+  const result = await injector(payload, peer);
+
+  assert.deepEqual(result, { turn: { id: "turn-1" } });
+  assert.equal(peer.threadId, "fresh-thread");
+  assert.deepEqual(calls.map((call) => call.method), ["thread/start", "turn/start"]);
+  assert.equal(calls[1].params.threadId, "fresh-thread");
+});
+
+test("Codex app-server injector fails loud without socket", async () => {
   const injector = createCodexAppServerInjector();
 
   await assert.rejects(() => injector(payload, { mode: "codex_app_server", threadId: "thread-1" }), /socket-missing/);
-  await assert.rejects(() => injector(payload, { mode: "codex_app_server", socketPath: "/tmp/codex.sock" }), /thread-missing/);
 });
