@@ -24,9 +24,10 @@
     "test:ws5-boundary": "python3 tests/ws5-send-boundary.test.py && python3 scripts/murmur-send-boundary.py --self-test && python3 -m py_compile scripts/murmur-send-boundary.py tests/ws5-send-boundary.test.py",
     "test:core": "npm --workspace @murmurv2/core test",
     "test:a2a": "npm --workspace @murmurv2/bridge-a2a test",
+    "test:broker-ws": "npm --workspace @murmurv2/broker-ws test",
     "test:federation": "npm --workspace @murmurv2/federation test",
     "test:federation-nats": "npm --workspace @murmurv2/federation-nats test",
-    "test": "npm run build && npm run test:unit && npm run test:core && npm run test:notify-smoke && npm run test:ws4-acp && npm run test:ws5-boundary && npm run test:a2a && npm run test:federation && npm run test:federation-nats"
+    "test": "npm run build && npm run test:unit && npm run test:core && npm run test:notify-smoke && npm run test:ws4-acp && npm run test:ws5-boundary && npm run test:a2a && npm run test:broker-ws && npm run test:federation && npm run test:federation-nats"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

@@ -14,6 +14,7 @@ const ORDER = [
   "@murmurv2/bridge-murmur",
   "@murmurv2/federation",
   "@murmurv2/broker-nats",
+  "@murmurv2/broker-ws",
   "@murmurv2/bridge-openclaw",
   "@murmurv2/bridge-telegram",
   "@murmurv2/mcp-server",

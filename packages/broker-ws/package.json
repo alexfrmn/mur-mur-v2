@@ -1,0 +1,30 @@
+{
+  "name": "@murmurv2/broker-ws",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@murmurv2/core": "^0.1.0",
+    "ws": "^8.21.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alexfrmn/mur-mur-v2.git",
+    "directory": "packages/broker-ws"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist/src",
+    "LICENSE"
+  ],
+  "description": "Murmur V2 WebSocket broker adapter — local relay and browser/edge-friendly transport semantics."
+}
