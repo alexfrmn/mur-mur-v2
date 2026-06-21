@@ -7,10 +7,15 @@
   "types": "dist/src/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test test/*.test.mjs"
+    "test": "npm run build && node --test test/*.test.mjs",
+    "test:fed-live": "npm run build && bash integration/run-fed-live.sh"
   },
   "dependencies": {
     "@murmurv2/core": "file:../core",
     "@murmurv2/federation": "file:../federation"
+  },
+  "devDependencies": {
+    "@murmurv2/security": "file:../security",
+    "nats": "^2.28.2"
   }
 }
