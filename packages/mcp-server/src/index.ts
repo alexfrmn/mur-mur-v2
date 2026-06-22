@@ -60,13 +60,16 @@ if (agentConfig) {
 }
 
 // Lazy read-only NATS tap for wake-accelerated murmur_request. Optional — if NATS is
-// unreachable we degrade gracefully to pure store polling (initialized at most once).
+// unreachable we degrade gracefully to pure store polling. A failed connect does NOT
+// disable acceleration forever: it's retried after a cooldown so a transient outage at
+// startup doesn't permanently fall back to slow polling (per CODEX-VOLT review).
+const WAKE_BROKER_RETRY_COOLDOWN_MS = 30_000;
 let wakeBroker: NatsBroker | null = null;
-let wakeBrokerInit = false;
-const getWakeBroker = async (): Promise<NatsBroker | null> => {
+let wakeBrokerNextRetry = 0;
+const getWakeBroker = async (now: () => number = Date.now): Promise<NatsBroker | null> => {
   if (!agentConfig) return null;
-  if (wakeBrokerInit) return wakeBroker;
-  wakeBrokerInit = true;
+  if (wakeBroker) return wakeBroker;
+  if (now() < wakeBrokerNextRetry) return null; // in cooldown after a recent failure
   try {
     const broker = new NatsBroker({
       url: agentConfig.natsUrl,
@@ -76,7 +79,9 @@ const getWakeBroker = async (): Promise<NatsBroker | null> => {
     await broker.connect();
     wakeBroker = broker;
   } catch {
-    wakeBroker = null; // graceful degrade — store polling still resolves the reply
+    // graceful degrade — store polling still resolves the reply; retry after cooldown
+    wakeBroker = null;
+    wakeBrokerNextRetry = now() + WAKE_BROKER_RETRY_COOLDOWN_MS;
   }
   return wakeBroker;
 };
@@ -302,12 +307,16 @@ const handleTool = async (name: string, args: Record<string, unknown>): Promise<
       attach: null,
       sub: null,
     };
+    let wokenBySignal = false;
     let onSignal: ((wake: () => void) => void) | undefined;
     if (broker) {
       onSignal = (wake) => {
         tap.attach = broker
           .subscribeRaw(agentConfig!.subject, (env) => {
-            if (matchReply(env)) wake();
+            if (matchReply(env)) {
+              wokenBySignal = true;
+              wake();
+            }
           })
           .then((sub) => {
             tap.sub = sub;
@@ -348,7 +357,11 @@ const handleTool = async (name: string, args: Record<string, unknown>): Promise<
         conversationId,
         sentAt,
         reply: asMessage(reply),
-        accelerated: !!broker,
+        // Precise telemetry (per CODEX-VOLT review): tapAttached = the read-only NATS
+        // tap was live for this wait; wokenBySignal = a matching envelope actually
+        // short-circuited the poll (true acceleration, not merely "broker available").
+        tapAttached: tap.sub !== null,
+        wokenBySignal,
       };
     }
 
