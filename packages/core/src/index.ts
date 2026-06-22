@@ -20,10 +20,11 @@ export interface EnvelopeV1 {
   sequence?: number;
   parentMsgId?: string;
   /** Optional bearer auth token (`MURMUR-AUTH:...`) authorizing the sender. When present
-   *  it is part of the signed payload (so it can't be stripped/swapped), and a verifier
-   *  may enforce it at ingress (see @murmurv2/federation `verifyAuthToken` /
-   *  `authorizeInbound`, gated by `MURMUR_ENFORCE_AUTH`). Absent on un-authenticated
-   *  envelopes — those sign byte-identically to before this field existed. */
+   *  it is part of the signed payload (so it can't be stripped/swapped) and can be
+   *  verified with @murmurv2/federation `verifyAuthToken`. Ingress enforcement (an
+   *  `authorizeInbound` helper gated by `MURMUR_ENFORCE_AUTH`) is forthcoming in
+   *  auth/authz #47 PR-D. Absent on un-authenticated envelopes — those sign
+   *  byte-identically to before this field existed. */
   authToken?: string;
   payloadCiphertext: string;
   payloadNonce: string;

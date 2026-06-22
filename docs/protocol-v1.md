@@ -32,10 +32,11 @@ Envelope message payloads are encrypted on the wire; presence frames are intenti
 7. Retry policy moves failed messages; terminal failures go to DLQ
 
 An optional `authToken` (bearer `MURMUR-AUTH:…`) authorizes the sender. When present it
-is part of the signed payload (cannot be stripped/swapped) and a verifier may enforce it
-at ingress (`@murmurv2/federation` `authorizeInbound`, gated by `MURMUR_ENFORCE_AUTH`).
-Absent on un-authenticated envelopes, which sign byte-identically to before the field
-existed — see [`protocol-compatibility.md`](protocol-compatibility.md).
+is part of the signed payload (cannot be stripped/swapped) and can be verified with
+`@murmurv2/federation` `verifyAuthToken`; ingress enforcement (an `authorizeInbound`
+helper gated by `MURMUR_ENFORCE_AUTH`) is forthcoming in auth/authz #47 PR-D. Absent on
+un-authenticated envelopes, which sign byte-identically to before the field existed —
+see [`protocol-compatibility.md`](protocol-compatibility.md).
 
 ## Delivery model
 - at-least-once delivery
