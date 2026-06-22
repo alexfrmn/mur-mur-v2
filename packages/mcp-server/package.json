@@ -9,6 +9,7 @@
     "prepack": "npm run build"
   },
   "dependencies": {
+    "@murmurv2/broker-nats": "^0.1.0",
     "@murmurv2/core": "^0.1.0",
     "@murmurv2/security": "^0.1.0"
   },

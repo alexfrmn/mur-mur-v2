@@ -62,6 +62,19 @@ export declare class NatsBroker {
         onMessage: MessageHandler;
         maxPoisonAttempts?: number;
     }): Promise<BrokerSubscription>;
+    /**
+     * Read-only real-time tap on a subject. Plain core subscription — no queue
+     * group, no ACK publish, no dedupe, no JetStream consumer. A plain subscriber
+     * still receives `js.publish`'d messages in real time, so this works whether
+     * or not JetStream is enabled, and it never steals delivery from the durable
+     * daemon consumer (which uses its own consumerId / queue semantics).
+     *
+     * Intended as a wake-signal source: `onEnvelope` receives the decoded
+     * envelope METADATA only (conversationId, senderAgentId, msgId). It does NOT
+     * decrypt the payload — decryption stays the daemon's responsibility. Malformed
+     * frames are ignored (best-effort signal, not a delivery path).
+     */
+    subscribeRaw(subject: string, onEnvelope: (envelope: EnvelopeV1) => void): Promise<BrokerSubscription>;
     startAckCorrelation(params: {
         outbox: OutboxStore;
         ackSubject: string;
