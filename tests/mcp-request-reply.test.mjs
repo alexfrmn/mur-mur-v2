@@ -82,14 +82,27 @@ test("C: a wake signal resolves the reply faster than the poll interval", async 
 });
 
 test("C2: without a signal the same long-poll setup times out", async () => {
+  // Mirror of C but with no wake signal. Uses the injectable clock/sleep so the
+  // result is deterministic: with real timers, sleep(remaining) can undershoot the
+  // deadline by a hair, letting the loop re-check the store right at the boundary and
+  // return reply("never") — that re-check is harmless in production but made this test
+  // flaky (`tests/mcp-request-reply.test.mjs:84`). A fake clock that advances exactly
+  // by each requested sleep consumes the whole deadline in one wait, so the long poll
+  // never re-checks before timing out.
   let calls = 0;
+  let clock = 0;
   const res = await waitForReply({
     checkStore: async () => (++calls >= 2 ? reply("never") : null),
-    pollMs: 10_000,
+    pollMs: 10_000, // a pure poll would never re-check within the deadline
     graceMs: 5,
-    deadline: Date.now() + 150, // shorter than poll interval → only one check
+    deadline: 150, // shorter than poll interval → only the initial check fits
+    now: () => clock,
+    sleep: async (ms) => {
+      clock += ms;
+    },
   });
   assert.equal(res, null);
+  assert.equal(calls, 1); // only the initial check; no signal → no early re-poll
 });
 
 // --- D: lost-wakeup safety (signal fires DURING the store check) --------------
