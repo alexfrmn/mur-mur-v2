@@ -272,7 +272,10 @@ async function authStoreWithIssuer() {
 
 function authClaims(overrides = {}) {
   return {
+    // issuer's verify key is the one registered in the roster by authStoreWithIssuer
+    // (it plays the authority role here); subject is the distinct actor it vouches for.
     issuer: { org: "aimindset", agentId: "agent-jarvis" },
+    subject: { org: "aimindset", agentId: "agent-worker" },
     audience: { org: "partner", agentId: "agent-codex" },
     scopes: ["murmur:send", "murmur:reply"],
     issuedAt: "2026-06-21T10:00:00.000Z",
@@ -312,6 +315,42 @@ test("AuthToken: canonical claims are scope-order independent", () => {
   assert.equal(
     canonicalAuthTokenClaims(authClaims({ scopes: ["murmur:reply", "murmur:send"] })),
     canonicalAuthTokenClaims(authClaims({ scopes: ["murmur:send", "murmur:reply"] })),
+  );
+});
+
+test("AuthToken: binds subject (actor) — requiredSubject matches, mismatch/tamper rejected", async () => {
+  const { store, issuerSig } = await authStoreWithIssuer();
+  const token = await signAuthToken(authClaims(), issuerSig.privateKey);
+  // the bound actor is accepted
+  assert.deepEqual(
+    await verifyAuthToken(token, store, {
+      now: "2026-06-21T10:30:00.000Z",
+      requiredSubject: { org: "aimindset", agentId: "agent-worker" },
+    }),
+    { accepted: true },
+  );
+  // a different actor is rejected — the authority's grant is bound to agent-worker only
+  assert.deepEqual(
+    await verifyAuthToken(token, store, {
+      now: "2026-06-21T10:30:00.000Z",
+      requiredSubject: { org: "aimindset", agentId: "agent-evil" },
+    }),
+    { accepted: false, reason: "subject-mismatch" },
+  );
+  // subject is in the signed payload — swapping it invalidates the signature
+  assert.deepEqual(
+    await verifyAuthToken(
+      { ...token, subject: { org: "aimindset", agentId: "agent-evil" } },
+      store,
+      { now: "2026-06-21T10:30:00.000Z" },
+    ),
+    { accepted: false, reason: "signature-invalid" },
+  );
+  // a token missing subject is malformed
+  const { subject, ...noSubject } = token;
+  assert.deepEqual(
+    await verifyAuthToken(noSubject, store, { now: "2026-06-21T10:30:00.000Z" }),
+    { accepted: false, reason: "malformed" },
   );
 });
 
