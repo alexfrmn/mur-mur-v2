@@ -12,10 +12,11 @@
     "types": ["node"],
     "baseUrl": ".",
     "paths": {
+      "@murmurv2/broker-nats": ["../broker-nats/src/index.ts"],
       "@murmurv2/core": ["../core/src/index.ts"],
       "@murmurv2/security": ["../security/src/index.ts"]
     }
   },
   "include": ["src"],
-  "references": [{ "path": "../core" }, { "path": "../security" }]
+  "references": [{ "path": "../broker-nats" }, { "path": "../core" }, { "path": "../security" }]
 }

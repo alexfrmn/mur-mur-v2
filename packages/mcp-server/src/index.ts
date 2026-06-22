@@ -9,6 +9,8 @@ import {
   type LocalMessageRecord,
 } from "@murmurv2/core";
 import { encryptPayload, signEnvelope } from "@murmurv2/security";
+import { NatsBroker, type BrokerSubscription } from "@murmurv2/broker-nats";
+import { buildReplyMatcher, waitForReply } from "./request-reply.js";
 
 interface JsonRpcRequest {
   jsonrpc: "2.0";
@@ -56,6 +58,28 @@ let outbox: SQLiteDedupeOutboxStore | null = null;
 if (agentConfig) {
   outbox = new SQLiteDedupeOutboxStore(dbPath);
 }
+
+// Lazy read-only NATS tap for wake-accelerated murmur_request. Optional — if NATS is
+// unreachable we degrade gracefully to pure store polling (initialized at most once).
+let wakeBroker: NatsBroker | null = null;
+let wakeBrokerInit = false;
+const getWakeBroker = async (): Promise<NatsBroker | null> => {
+  if (!agentConfig) return null;
+  if (wakeBrokerInit) return wakeBroker;
+  wakeBrokerInit = true;
+  try {
+    const broker = new NatsBroker({
+      url: agentConfig.natsUrl,
+      token: agentConfig.natsToken,
+      jetstream: false,
+    });
+    await broker.connect();
+    wakeBroker = broker;
+  } catch {
+    wakeBroker = null; // graceful degrade — store polling still resolves the reply
+  }
+  return wakeBroker;
+};
 
 // --- Stable envelope payload for signing ---
 const stableEnvelopePayload = (envelope: EnvelopeV1): string => {
@@ -263,17 +287,58 @@ const handleTool = async (name: string, args: Record<string, unknown>): Promise<
       transport: "nats",
     });
 
-    // Poll for response
+    // Wait for the reply. Store polling is the durable fallback and always runs;
+    // an optional read-only NATS tap on our own subject accelerates the wait by
+    // re-checking the store as soon as a matching envelope is observed. The tap is
+    // signal-only — the daemon stays the source of truth for decrypt + persistence.
+    const graceMs = Number(args.grace_ms ?? 250);
     const deadline = Date.now() + timeoutMs;
-    let reply: LocalMessageRecord | null = null;
+    const matchReply = buildReplyMatcher(conversationId, to);
 
-    while (Date.now() < deadline) {
-      const inbound = await store.getInboundAfter(conversationId, sentAt, 1);
-      if (inbound.length > 0) {
-        reply = inbound[0];
-        break;
+    const broker = await getWakeBroker();
+    // Holder object: the tap is attached inside a callback, so a plain `let` would be
+    // narrowed to `null` by control-flow analysis. A mutable property keeps its type.
+    const tap: { attach: Promise<void> | null; sub: BrokerSubscription | null } = {
+      attach: null,
+      sub: null,
+    };
+    let onSignal: ((wake: () => void) => void) | undefined;
+    if (broker) {
+      onSignal = (wake) => {
+        tap.attach = broker
+          .subscribeRaw(agentConfig!.subject, (env) => {
+            if (matchReply(env)) wake();
+          })
+          .then((sub) => {
+            tap.sub = sub;
+          })
+          .catch(() => {
+            /* tap failed to attach — store polling still resolves the reply */
+          });
+      };
+    }
+
+    let reply: LocalMessageRecord | null = null;
+    try {
+      reply = await waitForReply({
+        checkStore: async () => {
+          const inbound = await store.getInboundAfter(conversationId, sentAt, 1);
+          return inbound.length > 0 ? inbound[0] : null;
+        },
+        pollMs,
+        graceMs,
+        deadline,
+        onSignal,
+      });
+    } finally {
+      if (tap.attach) await tap.attach;
+      if (tap.sub) {
+        try {
+          await tap.sub.unsubscribe();
+        } catch {
+          /* ignore unsubscribe errors */
+        }
       }
-      await new Promise((r) => setTimeout(r, pollMs));
     }
 
     if (reply) {
@@ -283,6 +348,7 @@ const handleTool = async (name: string, args: Record<string, unknown>): Promise<
         conversationId,
         sentAt,
         reply: asMessage(reply),
+        accelerated: !!broker,
       };
     }
 
@@ -366,7 +432,7 @@ const tools = [
   {
     name: "murmur_request",
     description:
-      "Send a message and wait for the reply. Combines murmur_send + automatic polling — the tool blocks until the peer responds or timeout is reached. Ideal for autonomous agent-to-agent conversations.",
+      "Send a message and wait for the reply. Combines murmur_send with a durable store-poll, accelerated by a read-only NATS tap so the reply is returned as soon as it lands (falls back to pure polling when NATS is unavailable). The tool blocks until the peer responds or timeout is reached. Ideal for autonomous agent-to-agent conversations.",
     inputSchema: {
       type: "object",
       properties: {
@@ -374,7 +440,8 @@ const tools = [
         text: { type: "string", description: "Message text (will be encrypted)" },
         conversationId: { type: "string", description: "Optional conversation ID" },
         timeout_ms: { type: "number", description: "Max wait time in ms (default: 300000 = 5 min)" },
-        poll_interval_ms: { type: "number", description: "Poll interval in ms (default: 10000 = 10s)" },
+        poll_interval_ms: { type: "number", description: "Store-poll fallback interval in ms (default: 10000 = 10s)" },
+        grace_ms: { type: "number", description: "Delay after a wake signal before re-checking the store, to let the daemon persist (default: 250)" },
       },
       required: ["to", "text"],
     },
