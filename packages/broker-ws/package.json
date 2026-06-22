@@ -10,7 +10,7 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@murmurv2/core": "^0.1.0",
+    "@murmurv2/core": "^0.2.0",
     "ws": "^8.21.0"
   },
   "license": "MIT",
@@ -26,5 +26,5 @@
     "dist/src",
     "LICENSE"
   ],
-  "description": "Murmur V2 WebSocket broker adapter — local relay and browser/edge-friendly transport semantics."
+  "description": "Murmur V2 WebSocket broker adapter \u2014 local relay and browser/edge-friendly transport semantics."
 }

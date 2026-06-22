@@ -13,8 +13,8 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@murmurv2/core": "^0.1.0",
-    "@murmurv2/federation": "^0.1.0"
+    "@murmurv2/core": "^0.2.0",
+    "@murmurv2/federation": "^0.2.0"
   },
   "devDependencies": {
     "@murmurv2/security": "^0.1.0",
@@ -33,5 +33,5 @@
     "dist/src",
     "LICENSE"
   ],
-  "description": "Murmur V2 federation NATS contract — fed.* subjects + account-config renderer for cross-org leaf-node meshes."
+  "description": "Murmur V2 federation NATS contract \u2014 fed.* subjects + account-config renderer for cross-org leaf-node meshes."
 }
