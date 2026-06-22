@@ -142,8 +142,12 @@ no other protocol JSON schemas exist in the repo.
 The schema validates structural shape. A few checks live only in the runtime guards
 and are intentionally **outside** the schema↔guard agreement matrices:
 
-- **`ts` / `createdAt` / `at` date-time validity** — `format: date-time` is an advisory
-  annotation in Draft 2020-12; the guards enforce it via `Date.parse`.
+- **`createdAt` / `ts` date-time validity** — `format: date-time` is an advisory
+  annotation in Draft 2020-12; the runtime guards enforce it via `Date.parse`
+  (`isEnvelopeV1` for `EnvelopeV1.createdAt`, `isPresenceFrameV1` for `PresenceFrameV1.ts`).
+- **`AckV1.at`** — generated as an ISO-8601 string by `createAck`, but there is **no
+  `isAckV1` guard**: its `format: date-time` is advisory only (validator-dependent) with
+  no runtime enforcement on read.
 - **signature verification & payload decryption** — `@murmurv2/security`, not shape.
 - **stream semantics** — `chunkIndex` bounds, `totalBytes` accounting, and
   `digest`/`sha256` matching are the reassembler's job, not the frame guards'.
