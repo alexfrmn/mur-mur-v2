@@ -40,8 +40,17 @@ const store = new SQLiteMessageStore(dbPath);
 const outbox = new SQLiteDedupeOutboxStore(dbPath);
 const broker = new NatsBroker({ url: natsUrl, token: natsToken });
 
-// Stable payload that gets signed. The field set + order MUST match the rest of
-// the mesh (this mirrors the reference daemon) or signatures will not verify.
+// Stable payload that gets signed. The canonical source of truth is
+// `stableEnvelopePayload` in @murmurv2/core, golden-locked in
+// packages/core/test/stable-envelope-payload.test.mjs — this MUST stay byte-identical
+// (field set + order) or signatures will not verify against the mesh.
+//
+// It is intentionally INLINED here (not imported from core) because this example pins
+// the PUBLISHED `@murmurv2/core@^0.1.0`, which predates the exported helper; importing
+// it would break a standalone `npm install` of this template. Switch to
+// `import { stableEnvelopePayload } from "@murmurv2/core"` when bumping to the core
+// version that exports it — tracked for auth/authz #47 PR-C (when authToken enters the
+// signed payload and core is re-published).
 const stableEnvelopePayload = (e) =>
   JSON.stringify({
     schemaVersion: e.schemaVersion,

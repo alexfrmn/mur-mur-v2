@@ -24,25 +24,15 @@ import {
   verifyEnvelopeSignature,
 } from "../../security/dist/src/index.js";
 import { signRoster, verifyRoster, lookupAgentKeys } from "../../federation/dist/src/index.js";
+import { stableEnvelopePayload } from "../../core/dist/src/index.js";
 import { federationMessageSubject } from "../dist/src/index.js";
 
 const PORT = process.env.FED_NATS_PORT || "14333";
 const NATS_URL = `nats://127.0.0.1:${PORT}`;
 const sc = StringCodec();
 
-// Mesh-canonical signing input (byte-identical to daemon / mcp-server / bridge-a2a).
-function stableEnvelopePayload(e) {
-  return JSON.stringify({
-    schemaVersion: e.schemaVersion,
-    msgId: e.msgId,
-    conversationId: e.conversationId,
-    senderAgentId: e.senderAgentId,
-    recipients: [...e.recipients],
-    createdAt: e.createdAt,
-    payloadCiphertext: e.payloadCiphertext,
-    payloadNonce: e.payloadNonce,
-  });
-}
+// Mesh-canonical signing input imported from @murmurv2/core (single source of truth)
+// so this cross-org live test can't drift from the helper every other signer uses.
 
 function natsReachable(url) {
   const { hostname, port } = new URL(url);

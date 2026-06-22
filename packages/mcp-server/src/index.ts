@@ -5,6 +5,7 @@ import { createInterface } from "node:readline";
 import {
   SQLiteDedupeOutboxStore,
   SQLiteMessageStore,
+  stableEnvelopePayload,
   type EnvelopeV1,
   type LocalMessageRecord,
 } from "@murmurv2/core";
@@ -86,19 +87,8 @@ const getWakeBroker = async (now: () => number = Date.now): Promise<NatsBroker |
   return wakeBroker;
 };
 
-// --- Stable envelope payload for signing ---
-const stableEnvelopePayload = (envelope: EnvelopeV1): string => {
-  return JSON.stringify({
-    schemaVersion: envelope.schemaVersion,
-    msgId: envelope.msgId,
-    conversationId: envelope.conversationId,
-    senderAgentId: envelope.senderAgentId,
-    recipients: [...envelope.recipients],
-    createdAt: envelope.createdAt,
-    payloadCiphertext: envelope.payloadCiphertext,
-    payloadNonce: envelope.payloadNonce,
-  });
-};
+// stableEnvelopePayload is the canonical signing form from @murmurv2/core
+// (single source of truth shared by daemon / bridges / runner / demos).
 
 // --- JSON-RPC helpers ---
 const send = (payload: unknown): void => {

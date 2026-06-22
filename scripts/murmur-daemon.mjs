@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { NatsBroker } from "@murmurv2/broker-nats";
-import { SQLiteDedupeOutboxStore, SQLiteMessageStore } from "@murmurv2/core";
+import { SQLiteDedupeOutboxStore, SQLiteMessageStore, stableEnvelopePayload } from "@murmurv2/core";
 import { decryptPayload, verifyEnvelopeSignature } from "@murmurv2/security";
 import { NotifyQueue, flushNotifyQueue, normalizeNotifyTargets } from "./notify-router.mjs";
 import { createCodexAppServerInjector } from "./codex-app-server-wake.mjs";
@@ -192,16 +192,6 @@ const proxyWakeMonitor = new WakeMonitor({
   log,
 });
 
-const stableEnvelopePayload = (envelope) => JSON.stringify({
-  schemaVersion: envelope.schemaVersion,
-  msgId: envelope.msgId,
-  conversationId: envelope.conversationId,
-  senderAgentId: envelope.senderAgentId,
-  recipients: [...envelope.recipients],
-  createdAt: envelope.createdAt,
-  payloadCiphertext: envelope.payloadCiphertext,
-  payloadNonce: envelope.payloadNonce,
-});
 
 const onMessage = async (envelope) => {
   const senderId = envelope.senderAgentId;

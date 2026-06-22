@@ -9,6 +9,10 @@ packages/*/dist/
 .env.local
 .env.*.local
 
+# Python (helper scripts/tests generate bytecode)
+__pycache__/
+*.pyc
+
 # OS
 .DS_Store
 Thumbs.db

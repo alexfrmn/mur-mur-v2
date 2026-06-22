@@ -5,7 +5,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { SQLiteDedupeOutboxStore, SQLiteMessageStore } from "@murmurv2/core";
+import { SQLiteDedupeOutboxStore, SQLiteMessageStore, stableEnvelopePayload } from "@murmurv2/core";
 import { encryptPayload, signEnvelope } from "@murmurv2/security";
 
 const args = process.argv.slice(2);
@@ -60,17 +60,6 @@ const conversationId = opt.conversationId || `dm:${cfg.agentId}:${opt.to}`;
 const msgId = randomUUID();
 const createdAt = new Date().toISOString();
 
-const stableEnvelopePayload = (e) =>
-  JSON.stringify({
-    schemaVersion: e.schemaVersion,
-    msgId: e.msgId,
-    conversationId: e.conversationId,
-    senderAgentId: e.senderAgentId,
-    recipients: [...e.recipients],
-    createdAt: e.createdAt,
-    payloadCiphertext: e.payloadCiphertext,
-    payloadNonce: e.payloadNonce,
-  });
 
 try {
   const encrypted = await encryptPayload(
