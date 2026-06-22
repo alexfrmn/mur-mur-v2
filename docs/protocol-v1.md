@@ -17,8 +17,10 @@ the guards cannot drift. Versioning and forward-compatibility rules live in
 | `SignedPresenceFrameV1` | Ed25519-signed presence | `#/$defs/SignedPresenceFrameV1` | `isSignedPresenceFrameV1` |
 | `StreamStart` / `StreamChunk` / `StreamEnd` | chunked payload streaming | `#/$defs/Stream*` (+ `StreamFrame` union) | `isStreamStart` / `isStreamChunk` / `isStreamEnd` / `isStreamFrame` |
 
-All payloads on the wire are encrypted; the schema validates **shape**, while signature
-verification and payload decryption are runtime concerns (`@murmurv2/security`).
+Envelope message payloads are encrypted on the wire; presence frames are intentionally
+**public, signed cleartext** metadata (no secret). In all cases the schema validates
+**shape**, while signature verification and payload decryption are runtime concerns
+(`@murmurv2/security`).
 
 ## Envelope lifecycle
 1. Producer builds `EnvelopeV1`
