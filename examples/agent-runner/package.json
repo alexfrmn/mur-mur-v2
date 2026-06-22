@@ -1,0 +1,19 @@
+{
+  "name": "murmur-agent-runner-example",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Minimal external-agent runner over the published @murmurv2/* packages.",
+  "scripts": {
+    "gen-keys": "node gen-keys.mjs",
+    "start": "node agent-runner.mjs run"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@murmurv2/broker-nats": "^0.1.0",
+    "@murmurv2/core": "^0.1.0",
+    "@murmurv2/security": "^0.1.1"
+  }
+}
