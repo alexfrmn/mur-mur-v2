@@ -1,0 +1,11 @@
+.git
+.github
+node_modules
+packages/*/dist
+.data
+.data-*
+*.db
+*.db-*
+npm-debug.log*
+Dockerfile*
+deploy/kubernetes/*.local.yaml
