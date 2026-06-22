@@ -482,9 +482,9 @@ See [protocol-v1.md](docs/protocol-v1.md) for the full specification.
 ### Planned (next wave)
 - [ ] **Message streaming** — *PR1 merged:* pure core stream frames (start/chunk/end), UTF-8-safe chunking, in-memory reassembler (out-of-order + idempotent + conflict-reject), backpressure predicate (chunk + byte windows). PR2: NATS wiring + durable reassembly + sha256 integrity
 - [ ] **Agent discovery protocol** — *PR1 merged:* presence frames + candidate registry (ttl expiry, dedupe, out-of-order guard). Trust stays an explicit operator promote — candidates are never auto-trusted. PR2: NATS announce/listen (`announcePresence` / `subscribePresence`) + signed presence frames. PR3: operator promote-flow + a query/roster API
-- [ ] Reference deployment examples — docker-compose, Kubernetes manifests
-- [ ] Conformance test suite — integration tests for third-party implementations
-- [ ] Versioned protocol spec — machine-readable schema + compatibility matrix
+- [x] Reference deployment examples — docker-compose (`deploy/docker-compose.messaging.yml`) + Kubernetes manifests (`deploy/kubernetes/`)
+- [x] Conformance test suite — schema↔guard agreement matrices for every wire type (`packages/core/test/conformance.test.mjs`); port the fixtures to check a third-party implementation
+- [x] Versioned protocol spec — machine-readable schema (`protocol-v1.schema.json`) + prose ([`docs/protocol-v1.md`](docs/protocol-v1.md)) + compatibility matrix ([`docs/protocol-compatibility.md`](docs/protocol-compatibility.md)) covering envelope, ack, presence, and stream frames
 
 ### Research
 - [ ] MLS group encryption (RFC 9420) — forward secrecy for multi-agent groups via OpenMLS WASM

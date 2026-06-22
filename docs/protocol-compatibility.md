@@ -10,7 +10,11 @@ guard `isEnvelopeV1` in `@murmurv2/core` mirrors it, and the conformance suite
 
 | `schemaVersion` | Status  | Envelope | Ack    | Notes |
 |-----------------|---------|----------|--------|-------|
-| `1.0`           | current | `EnvelopeV1` | `AckV1` | Shipped in v2.x. Only accepted wire version. |
+| `1.0`           | current | `EnvelopeV1` | `AckV1` | Shipped in v2.x. Only accepted wire version. Also covers the discovery (`PresenceFrameV1`, `SignedPresenceFrameV1`) and streaming (`StreamStart`/`StreamChunk`/`StreamEnd`) frames below. |
+
+Only `EnvelopeV1` carries `schemaVersion` on the wire; the presence and stream frames
+are versioned together with it (they ship and break as one protocol version) and are
+discriminated structurally — `presenceVersion: "1.0"` for presence, `kind` for streams.
 
 ## Compatibility policy
 
@@ -56,17 +60,97 @@ guard `isEnvelopeV1` in `@murmurv2/core` mirrors it, and the conformance suite
 | `at` | ✅ | string | ISO-8601 date-time |
 | `reason` | — | string | |
 
+## PresenceFrameV1 (discovery)
+
+Public discovery metadata only — no secret. The signed wrapper proves integrity, not
+identity; trust is an out-of-band operator promotion.
+
+| Field | Required | Type | Constraint |
+|-------|----------|------|------------|
+| `presenceVersion` | ✅ | string | `const "1.0"` |
+| `agentId` | ✅ | string | non-empty |
+| `encryptionPublicKey` | ✅ | string | non-empty |
+| `signingPublicKey` | ✅ | string | non-empty |
+| `subject` | ✅ | string | non-empty |
+| `capabilities` | ✅ | string[] | each a string (may be empty array) |
+| `ttlMs` | ✅ | number | `> 0` (`exclusiveMinimum`) |
+| `ts` | ✅ | string | ISO-8601 date-time (validity runtime-only) |
+| `nonce` | ✅ | string | non-empty |
+
+### SignedPresenceFrameV1
+
+| Field | Required | Type | Constraint |
+|-------|----------|------|------------|
+| `frame` | ✅ | object | a valid `PresenceFrameV1` |
+| `signature` | ✅ | string | non-empty (Ed25519 over the canonical frame) |
+
+## Stream frames
+
+Discriminated by `kind`. `StreamFrame` is the `oneOf` union of the three.
+
+### StreamStart (`kind: "stream.start"`)
+
+| Field | Required | Type | Constraint |
+|-------|----------|------|------------|
+| `kind` | ✅ | string | `const "stream.start"` |
+| `streamId` | ✅ | string | non-empty |
+| `chunkCount` | ✅ | number | declared total chunks |
+| `totalBytes` | ✅ | number | declared total bytes |
+| `contentType` | — | string | |
+| `startedAt` | — | string | |
+
+### StreamChunk (`kind: "stream.chunk"`)
+
+| Field | Required | Type | Constraint |
+|-------|----------|------|------------|
+| `kind` | ✅ | string | `const "stream.chunk"` |
+| `streamId` | ✅ | string | non-empty |
+| `chunkIndex` | ✅ | number | |
+| `chunkCount` | ✅ | number | |
+| `data` | ✅ | string | **non-empty** (zero-byte chunk rejected: `stream-chunk-data-required`) |
+| `isLast` | ✅ | boolean | |
+| `sha256` | — | string | optional per-chunk integrity tag |
+
+### StreamEnd (`kind: "stream.end"`)
+
+| Field | Required | Type | Constraint |
+|-------|----------|------|------------|
+| `kind` | ✅ | string | `const "stream.end"` |
+| `streamId` | ✅ | string | non-empty |
+| `chunkCount` | ✅ | number | |
+| `totalBytes` | ✅ | number | |
+| `digest` | — | string | optional whole-stream integrity tag |
+| `sha256` | — | string | optional whole-stream integrity tag |
+
 ## Entrypoints
 
-`protocol-v1.schema.json` is a single file with two validation targets:
+`protocol-v1.schema.json` is a single file; validate each wire type against its target:
 
 | Validate | Entrypoint |
 |----------|------------|
 | an inbound **envelope** | the document **root** (it `$ref`s `#/$defs/EnvelopeV1`) — so validating against the file directly is correct |
 | an **ack** | `#/$defs/AckV1` |
+| a **presence frame** | `#/$defs/PresenceFrameV1` |
+| a **signed presence frame** | `#/$defs/SignedPresenceFrameV1` |
+| a **stream frame** | `#/$defs/StreamFrame` (or a specific `#/$defs/StreamStart` \| `StreamChunk` \| `StreamEnd`) |
 
 There is one canonical machine-readable schema (`packages/core/schema/protocol-v1.schema.json`);
-no other EnvelopeV1/AckV1 JSON schemas exist in the repo.
+no other protocol JSON schemas exist in the repo.
+
+### Runtime-only checks (not assertable in JSON Schema)
+
+The schema validates structural shape. A few checks live only in the runtime guards
+and are intentionally **outside** the schema↔guard agreement matrices:
+
+- **`createdAt` / `ts` date-time validity** — `format: date-time` is an advisory
+  annotation in Draft 2020-12; the runtime guards enforce it via `Date.parse`
+  (`isEnvelopeV1` for `EnvelopeV1.createdAt`, `isPresenceFrameV1` for `PresenceFrameV1.ts`).
+- **`AckV1.at`** — generated as an ISO-8601 string by `createAck`, but there is **no
+  `isAckV1` guard**: its `format: date-time` is advisory only (validator-dependent) with
+  no runtime enforcement on read.
+- **signature verification & payload decryption** — `@murmurv2/security`, not shape.
+- **stream semantics** — `chunkIndex` bounds, `totalBytes` accounting, and
+  `digest`/`sha256` matching are the reassembler's job, not the frame guards'.
 
 ## For third-party implementations
 
