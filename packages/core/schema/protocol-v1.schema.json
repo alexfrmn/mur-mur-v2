@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/alexfrmn/mur-mur-v2/schema/protocol-v1.schema.json",
   "title": "Murmur V2 Protocol v1 — EnvelopeV1 (canonical inbound-envelope schema)",
-  "description": "Machine-readable schema for the Murmur V2 wire protocol (schemaVersion 1.0). The document ROOT validates an EnvelopeV1 (the canonical inbound-message target), via $ref to #/$defs/EnvelopeV1. Validate ACKs against #/$defs/AckV1. Mirrors the runtime guard isEnvelopeV1 in @murmurv2/core. Unknown top-level fields are permitted for forward compatibility (consumers ignore them).",
+  "description": "Machine-readable schema for the Murmur V2 wire protocol (schemaVersion 1.0). The document ROOT validates an EnvelopeV1 (the canonical inbound-message target), via $ref to #/$defs/EnvelopeV1. Validate ACKs against #/$defs/AckV1, discovery presence against #/$defs/{PresenceFrameV1,SignedPresenceFrameV1}, and stream frames against #/$defs/{StreamStart,StreamChunk,StreamEnd} or the discriminated #/$defs/StreamFrame. Mirrors the runtime guards (isEnvelopeV1, isPresenceFrameV1, isSignedPresenceFrameV1, isStreamStart/Chunk/End/isStreamFrame) in @murmurv2/core. Unknown top-level fields are permitted for forward compatibility (consumers ignore them). Numeric bounds (ttlMs > 0), value finiteness, and date-time validity are advisory here and enforced at runtime by the guards.",
   "$ref": "#/$defs/EnvelopeV1",
   "$defs": {
     "EnvelopeV1": {
@@ -48,6 +48,89 @@
         "reason": { "type": "string" },
         "at": { "type": "string", "format": "date-time" }
       }
+    },
+    "PresenceFrameV1": {
+      "description": "Discovery presence announcement. PUBLIC metadata only; carries no secret. A signed wrapper (SignedPresenceFrameV1) proves integrity, NOT that agentId is who it claims — trust is established out-of-band at operator promotion.",
+      "type": "object",
+      "required": [
+        "presenceVersion",
+        "agentId",
+        "encryptionPublicKey",
+        "signingPublicKey",
+        "subject",
+        "capabilities",
+        "ttlMs",
+        "ts",
+        "nonce"
+      ],
+      "properties": {
+        "presenceVersion": { "const": "1.0" },
+        "agentId": { "type": "string", "minLength": 1 },
+        "encryptionPublicKey": { "type": "string", "minLength": 1 },
+        "signingPublicKey": { "type": "string", "minLength": 1 },
+        "subject": { "type": "string", "minLength": 1 },
+        "capabilities": { "type": "array", "items": { "type": "string" } },
+        "ttlMs": { "type": "number", "exclusiveMinimum": 0 },
+        "ts": { "type": "string", "format": "date-time" },
+        "nonce": { "type": "string", "minLength": 1 }
+      }
+    },
+    "SignedPresenceFrameV1": {
+      "description": "An Ed25519-signed presence frame. signature is over the canonical frame payload.",
+      "type": "object",
+      "required": ["frame", "signature"],
+      "properties": {
+        "frame": { "$ref": "#/$defs/PresenceFrameV1" },
+        "signature": { "type": "string", "minLength": 1 }
+      }
+    },
+    "StreamStart": {
+      "description": "Opens a chunked stream. chunkCount/totalBytes are the declared totals the receiver reassembles against.",
+      "type": "object",
+      "required": ["kind", "streamId", "chunkCount", "totalBytes"],
+      "properties": {
+        "kind": { "const": "stream.start" },
+        "streamId": { "type": "string", "minLength": 1 },
+        "chunkCount": { "type": "number" },
+        "totalBytes": { "type": "number" },
+        "contentType": { "type": "string" },
+        "startedAt": { "type": "string" }
+      }
+    },
+    "StreamChunk": {
+      "description": "One payload chunk of a stream. data MUST be non-empty — the runtime (createStreamChunk + both reassemblers) rejects zero-byte chunks with stream-chunk-data-required. sha256 is an optional per-chunk integrity tag.",
+      "type": "object",
+      "required": ["kind", "streamId", "chunkIndex", "chunkCount", "data", "isLast"],
+      "properties": {
+        "kind": { "const": "stream.chunk" },
+        "streamId": { "type": "string", "minLength": 1 },
+        "chunkIndex": { "type": "number" },
+        "chunkCount": { "type": "number" },
+        "data": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string" },
+        "isLast": { "type": "boolean" }
+      }
+    },
+    "StreamEnd": {
+      "description": "Closes a stream. digest/sha256 are optional whole-stream integrity tags the receiver checks against the reassembled bytes.",
+      "type": "object",
+      "required": ["kind", "streamId", "chunkCount", "totalBytes"],
+      "properties": {
+        "kind": { "const": "stream.end" },
+        "streamId": { "type": "string", "minLength": 1 },
+        "chunkCount": { "type": "number" },
+        "totalBytes": { "type": "number" },
+        "digest": { "type": "string" },
+        "sha256": { "type": "string" }
+      }
+    },
+    "StreamFrame": {
+      "description": "Any stream wire frame, discriminated by `kind`.",
+      "oneOf": [
+        { "$ref": "#/$defs/StreamStart" },
+        { "$ref": "#/$defs/StreamChunk" },
+        { "$ref": "#/$defs/StreamEnd" }
+      ]
     }
   }
 }
