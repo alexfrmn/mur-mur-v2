@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Pending
 - **Auth enforcement end-to-end** — the broker ingress hook + `authorizeInbound` exist; the daemon does not yet wire them (so `MURMUR_ENFORCE_AUTH` is not enforced end-to-end). Requires daemon roster/identity wiring + token provisioning.
-- **npm republish @ 0.2.0** — `@murmurv2/core` (and dependents) export new API this release (`stableEnvelopePayload`, `EnvelopeV1.authToken`, stream guards, `authorizeInbound`, `InboundAuthorizer`); consumers importing them need a republished core (published `0.1.0` predates them).
+
+### Published
+- **npm @ 0.2.0** — `@murmurv2/core`, `@murmurv2/federation`, and `@murmurv2/broker-nats` are published on npm at `0.2.0` (the v2.3 API: `stableEnvelopePayload`, `EnvelopeV1.authToken`, stream guards, `authorizeInbound`, `InboundAuthorizer`); `security`/`observability` @ `0.1.1`, all other `@murmurv2/*` @ `0.1.0`.
 
 ## [2.3.0] - 2026-06-22
 

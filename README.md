@@ -26,7 +26,7 @@
   <img src="https://github.com/alexfrmn/mur-mur-v2/actions/workflows/ci.yml/badge.svg" alt="CI" />
   <img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen" alt="Node 22+" />
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
-  <img src="https://img.shields.io/badge/version-2.2.0-blue" alt="version 2.2.0" />
+  <img src="https://img.shields.io/badge/version-2.3.0-blue" alt="version 2.3.0" />
   <a href="https://www.npmjs.com/org/murmurv2"><img src="https://img.shields.io/npm/v/@murmurv2/core" alt="npm @murmurv2/core" /></a>
   <img src="https://img.shields.io/badge/transport-core_NATS_%2B_SQLite_outbox-purple" alt="core NATS plus SQLite outbox" />
   <img src="https://img.shields.io/badge/durability-optional_JetStream-teal" alt="optional JetStream durability" />
@@ -56,7 +56,7 @@ A **murmuration** is one of nature's most extraordinary phenomena — thousands 
 - **Validated: real cross-host A2A.** A fresh agent on a remote host (over the published `@murmurv2/*` packages) exchanged bidirectional encrypt/verify/ACK traffic with the mesh over the live broker — agent-to-agent across real hosts and network.
 - **Single canonical signing payload.** `stableEnvelopePayload` is now one export in `@murmurv2/core` (was copy-pasted across 7 sites), golden-locked by test.
 
-> npm packages re-publish at `0.2.0` for the new core/federation/broker-nats API is the gated next step; the published `0.1.0` predates it.
+> npm: `@murmurv2/core`, `@murmurv2/federation`, and `@murmurv2/broker-nats` are published at `0.2.0` (the new API surface — `stableEnvelopePayload`, `EnvelopeV1.authToken`, stream guards, `authorizeInbound`); `security`/`observability` @ `0.1.1`, the rest @ `0.1.0`.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full list (incl. v2.2: npm publish, WebSocket adapter, roster auth tokens, JetStream durability, federation, A2A bridge, native wake).
 
@@ -88,7 +88,7 @@ AI agents today are isolated. Claude can't talk to GPT. Your coding assistant ca
 ```
 ┌──────────────┐                        ┌──────────────┐
 │  Claude Code  │                        │   GPT Agent   │
-│  (Opus 4.6)   │   "Review this PR"    │  (GPT-5.3)    │
+│  (Opus 4.8)   │   "Review this PR"    │  (GPT-5.5)    │
 │               ├───────────────────────►│               │
 │               │◄───────────────────────┤               │
 │               │   "LGTM, 2 nits..."   │               │
@@ -295,7 +295,7 @@ Murmur V2 exposes an MCP server (JSON-RPC over stdio) with 7 tools:
 ### Add to Claude Code
 
 ```bash
-claude mcp add murmur -- node /path/to/mur-mur-v2/packages/mcp-server/dist/index.js
+claude mcp add murmur -- node /path/to/mur-mur-v2/packages/mcp-server/dist/src/index.js
 ```
 
 ### Add to any MCP client
@@ -305,7 +305,7 @@ claude mcp add murmur -- node /path/to/mur-mur-v2/packages/mcp-server/dist/index
   "mcpServers": {
     "murmur": {
       "command": "node",
-      "args": ["/path/to/mur-mur-v2/packages/mcp-server/dist/index.js"],
+      "args": ["/path/to/mur-mur-v2/packages/mcp-server/dist/src/index.js"],
       "env": {
         "DATA_DIR": "/path/to/mur-mur-v2/.data"
       }
