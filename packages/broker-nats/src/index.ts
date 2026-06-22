@@ -15,6 +15,8 @@ import {
   createAck,
   type EnvelopeV1,
   isEnvelopeV1,
+  isSignedPresenceFrameV1,
+  type SignedPresenceFrameV1,
   type DedupeStore,
   type OutboxStore,
   type AckV1,
@@ -405,6 +407,51 @@ export class NatsBroker {
     })().catch((err) => {
       const e = err instanceof Error ? err : new Error(String(err));
       console.error("[NatsBroker.subscribeRaw] loop crashed", { subject, message: e.message, stack: e.stack });
+    });
+
+    return sub;
+  }
+
+  /**
+   * Broadcast a signed presence frame for agent discovery. Presence is PUBLIC
+   * (public keys + capabilities), so it is published in the clear — not encrypted
+   * like a message envelope. Integrity/authorship come from the frame signature.
+   */
+  async announcePresence(subject: string, signed: SignedPresenceFrameV1): Promise<void> {
+    await this.connect();
+    const payload = this.sc.encode(JSON.stringify(signed));
+    if (this.js) {
+      await this.js.publish(subject, payload);
+      return;
+    }
+    this.nc!.publish(subject, payload);
+  }
+
+  /**
+   * Listen for signed presence frames on a discovery subject. Plain read-only
+   * subscription — no ACK, no dedupe, no JetStream consumer. Signature
+   * verification + registry folding are the caller's job (see
+   * `observeSignedPresence` in @murmurv2/core). Malformed frames are dropped.
+   */
+  async subscribePresence(
+    subject: string,
+    onPresence: (signed: SignedPresenceFrameV1) => void,
+  ): Promise<BrokerSubscription> {
+    await this.connect();
+    const sub = this.nc!.subscribe(subject);
+
+    (async () => {
+      for await (const m of sub) {
+        try {
+          const decoded = JSON.parse(this.sc.decode(m.data));
+          if (isSignedPresenceFrameV1(decoded)) onPresence(decoded);
+        } catch {
+          // ignore malformed presence frames — discovery is best-effort
+        }
+      }
+    })().catch((err) => {
+      const e = err instanceof Error ? err : new Error(String(err));
+      console.error("[NatsBroker.subscribePresence] loop crashed", { subject, message: e.message, stack: e.stack });
     });
 
     return sub;

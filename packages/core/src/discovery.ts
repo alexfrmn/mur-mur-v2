@@ -151,3 +151,74 @@ export class CandidateRegistry {
     return this.list(now).length;
   }
 }
+
+/**
+ * Canonical string a presence frame is signed over. Fixed field set + order so
+ * both sides hash identical bytes regardless of object key order. Mirrors the
+ * envelope's stable-payload approach. The `signature` field is NOT included.
+ */
+export const stablePresencePayload = (frame: PresenceFrameV1): string =>
+  JSON.stringify({
+    presenceVersion: frame.presenceVersion,
+    agentId: frame.agentId,
+    encryptionPublicKey: frame.encryptionPublicKey,
+    signingPublicKey: frame.signingPublicKey,
+    subject: frame.subject,
+    capabilities: [...frame.capabilities],
+    ttlMs: frame.ttlMs,
+    ts: frame.ts,
+    nonce: frame.nonce,
+  });
+
+/**
+ * A presence frame plus an Ed25519 signature over `stablePresencePayload(frame)`.
+ *
+ * The signature proves the announcement was not tampered with in flight AND that
+ * the announcer holds the private key for the `signingPublicKey` it advertises
+ * (key-of-record consistency). It does NOT prove the `agentId` maps to a known,
+ * trusted identity — that is still established out-of-band at operator promotion.
+ * Verification itself lives in the transport/listener layer via @murmurv2/security.
+ */
+export interface SignedPresenceFrameV1 {
+  frame: PresenceFrameV1;
+  signature: string;
+}
+
+export const isSignedPresenceFrameV1 = (v: unknown): v is SignedPresenceFrameV1 => {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.signature === "string" && o.signature.length > 0 &&
+    isPresenceFrameV1(o.frame)
+  );
+};
+
+/** Verifies an Ed25519 signature over a stable payload. Injected so core stays
+ *  free of a crypto dependency (the listener passes @murmurv2/security's verify). */
+export type PresenceVerifier = (
+  payload: string,
+  signature: string,
+  publicKey: string,
+) => Promise<boolean>;
+
+/**
+ * Verify a signed presence frame and, only if the signature checks out against
+ * the key the frame advertises, fold it into the registry as a (still untrusted)
+ * candidate. Returns the candidate, or null if the input is malformed or the
+ * signature is invalid. Never trusts — `observe()` still yields `trusted: false`.
+ */
+export const observeSignedPresence = async (
+  registry: CandidateRegistry,
+  signed: unknown,
+  verify: PresenceVerifier,
+  now: number,
+): Promise<DiscoveryCandidate | null> => {
+  if (!isSignedPresenceFrameV1(signed)) return null;
+  const ok = await verify(
+    stablePresencePayload(signed.frame),
+    signed.signature,
+    signed.frame.signingPublicKey,
+  );
+  if (!ok) return null;
+  return registry.observe(signed.frame, now);
+};
