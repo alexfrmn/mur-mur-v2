@@ -464,12 +464,12 @@ See [protocol-v1.md](docs/protocol-v1.md) for the full specification.
 - [ ] **Auth/authz token model** — roster-backed signed tokens with audience/scope/time verification are coded and unit-tested; remaining gate: wire token enforcement into live transports/bridges
 - [ ] **WebSocket transport adapter** — relay + broker client are coded and unit-tested for envelope delivery, ACK correlation, dedupe, and invalid-envelope NACKs; remaining gate: browser/edge deployment examples and hardening
 - [x] Prometheus metrics exporter — outbox depth, delivery latency, error rates
-- [x] **npm package publishing** — all `@murmurv2/*` packages published public on npm @ `0.1.0` (MIT); `@murmurv2/broker-ws` ships in the next release
-- [ ] NATS native request-reply — replace polling with ephemeral inbox subjects (design locked: read-only ephemeral subscription accelerates the wait, SQLite outbox stays source of truth)
+- [x] **npm package publishing** — all 12 `@murmurv2/*` packages published public on npm (MIT); `security` + `observability` @ `0.1.1` (declared `@noble/*` / `better-sqlite3` runtime deps), the rest @ `0.1.0`
+- [x] **NATS native request-reply** — wake-accelerated `murmur_request`: a read-only ephemeral NATS tap returns the reply as soon as it lands; the SQLite store-poll stays the durable fallback and the daemon stays source of truth for decrypt
 
 ### Planned (next wave)
-- [ ] Message streaming — large payload chunking with backpressure
-- [ ] Agent discovery protocol — find peers without manual invite exchange
+- [ ] **Message streaming** — *PR1 merged:* pure core stream frames (start/chunk/end), UTF-8-safe chunking, in-memory reassembler (out-of-order + idempotent + conflict-reject), backpressure predicate (chunk + byte windows). PR2: NATS wiring + durable reassembly + sha256 integrity
+- [ ] **Agent discovery protocol** — *PR1 merged:* presence frames + candidate registry (ttl expiry, dedupe, out-of-order guard). Trust stays an explicit operator promote — candidates are never auto-trusted. PR2: NATS `discovery.announce`/`discovery.query` + frame signing
 - [ ] Reference deployment examples — docker-compose, Kubernetes manifests
 - [ ] Conformance test suite — integration tests for third-party implementations
 - [ ] Versioned protocol spec — machine-readable schema + compatibility matrix
