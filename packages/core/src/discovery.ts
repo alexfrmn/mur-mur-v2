@@ -232,3 +232,63 @@ export const observeSignedPresence = async (
   if (!ok) return null;
   return registry.observe(signed.frame, now);
 };
+
+/** Filter for a roster query over discovered candidates. */
+export interface CandidateQuery {
+  /** Only candidates advertising this capability. */
+  capability?: string;
+  /** Only candidates whose subject exactly matches. */
+  subject?: string;
+}
+
+/**
+ * Roster query: the non-expired candidates at `now` matching the filter. Read-only
+ * — candidates remain untrusted; this is just discovery introspection (the surface
+ * an operator/UI uses to decide who to promote).
+ */
+export const queryCandidates = (
+  registry: CandidateRegistry,
+  query: CandidateQuery,
+  now: number,
+): DiscoveryCandidate[] =>
+  registry.list(now).filter(
+    (c) =>
+      (query.capability === undefined || c.capabilities.includes(query.capability)) &&
+      (query.subject === undefined || c.subject === query.subject),
+  );
+
+/** A trusted-peer entry derived from a candidate — the shape a peer config expects. */
+export interface PromotedPeer {
+  agentId: string;
+  encryptionPublicKey: string;
+  signingPublicKey: string;
+  subject: string;
+  /** Epoch ms the operator promoted this candidate. */
+  promotedAt: number;
+}
+
+/**
+ * Promote a discovered candidate into a trusted-peer entry. This is the EXPLICIT
+ * operator step the whole discovery design defers trust to: the caller (an
+ * operator action or an approved policy) decides to promote, and this returns the
+ * peer entry to add to the trusted peer set. It does NOT add the peer itself and
+ * does NOT mutate the registry — wiring the entry into the live peer config /
+ * daemon remains the caller's deliberate action.
+ *
+ * Returns null if there is no live (non-expired) candidate for `agentId`.
+ */
+export const promoteCandidate = (
+  registry: CandidateRegistry,
+  agentId: string,
+  now: number,
+): PromotedPeer | null => {
+  const c = registry.get(agentId, now);
+  if (!c) return null;
+  return {
+    agentId: c.agentId,
+    encryptionPublicKey: c.encryptionPublicKey,
+    signingPublicKey: c.signingPublicKey,
+    subject: c.subject,
+    promotedAt: now,
+  };
+};
