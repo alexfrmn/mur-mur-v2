@@ -3,6 +3,8 @@ import { mkdirSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+export * from "./streaming.js";
+
 export type DeliveryMode = "at-least-once";
 
 export interface EnvelopeV1 {

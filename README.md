@@ -466,9 +466,9 @@ See [protocol-v1.md](docs/protocol-v1.md) for the full specification.
 - [x] Prometheus metrics exporter — outbox depth, delivery latency, error rates
 - [x] **npm package publishing** — all `@murmurv2/*` packages published public on npm @ `0.1.0` (MIT); `@murmurv2/broker-ws` ships in the next release
 - [ ] NATS native request-reply — replace polling with ephemeral inbox subjects (design locked: read-only ephemeral subscription accelerates the wait, SQLite outbox stays source of truth)
+- [ ] **Message streaming PR1** — pure `@murmurv2/core` chunk payloads + in-memory reassembler with hash checks, duplicate handling, and count/byte backpressure. `streamId`/`chunkIndex` stay inside encrypted payload content; SQLite durability and NATS integration remain PR2.
 
 ### Planned (next wave)
-- [ ] Message streaming — large payload chunking with backpressure
 - [ ] Agent discovery protocol — find peers without manual invite exchange
 - [ ] Reference deployment examples — docker-compose, Kubernetes manifests
 - [ ] Conformance test suite — integration tests for third-party implementations
