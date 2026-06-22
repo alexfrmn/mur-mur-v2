@@ -1,0 +1,28 @@
+{
+  "agentId": "agent-stas",
+  "natsUrl": "nats://5.181.3.139:4222",
+  "natsToken": "<ASK-OPERATOR>",
+  "subject": "msg.agent-stas",
+  "keys": {
+    "encryption": {
+      "publicKey": "<from gen-keys.mjs>",
+      "privateKey": "<from gen-keys.mjs — KEEP SECRET>"
+    },
+    "signing": {
+      "publicKey": "<from gen-keys.mjs>",
+      "privateKey": "<from gen-keys.mjs — KEEP SECRET>"
+    }
+  },
+  "peers": {
+    "agent-jarvis": {
+      "encryption": { "publicKey": "<JARVIS encryption.publicKey — ask operator>" },
+      "signing": { "publicKey": "<JARVIS signing.publicKey — ask operator>" },
+      "subject": "msg.agent-jarvis"
+    },
+    "agent-codex-volt": {
+      "encryption": { "publicKey": "<CODEX-VOLT encryption.publicKey — ask operator>" },
+      "signing": { "publicKey": "<CODEX-VOLT signing.publicKey — ask operator>" },
+      "subject": "msg.agent-codex-volt"
+    }
+  }
+}
