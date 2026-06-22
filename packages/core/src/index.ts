@@ -19,6 +19,13 @@ export interface EnvelopeV1 {
   traceId?: string;
   sequence?: number;
   parentMsgId?: string;
+  /** Optional bearer auth token (`MURMUR-AUTH:...`) authorizing the sender. When present
+   *  it is part of the signed payload (so it can't be stripped/swapped) and can be
+   *  verified with @murmurv2/federation `verifyAuthToken`. Ingress enforcement (an
+   *  `authorizeInbound` helper gated by `MURMUR_ENFORCE_AUTH`) is forthcoming in
+   *  auth/authz #47 PR-D. Absent on un-authenticated envelopes — those sign
+   *  byte-identically to before this field existed. */
+  authToken?: string;
   payloadCiphertext: string;
   payloadNonce: string;
   signature: string;
@@ -50,6 +57,10 @@ export const stableEnvelopePayload = (envelope: EnvelopeV1): string =>
     createdAt: envelope.createdAt,
     payloadCiphertext: envelope.payloadCiphertext,
     payloadNonce: envelope.payloadNonce,
+    // authToken is appended ONLY when present, in a fixed final position: envelopes
+    // without it sign byte-identically to before this field existed (back-compat),
+    // and when present it is covered by the signature so it can't be stripped/swapped.
+    ...(envelope.authToken !== undefined ? { authToken: envelope.authToken } : {}),
   });
 
 export interface DedupeStore {
@@ -1192,7 +1203,9 @@ export const isEnvelopeV1 = (v: unknown): v is EnvelopeV1 => {
     hasOptional("ttlSeconds", "number") &&
     hasOptional("traceId", "string") &&
     hasOptional("sequence", "number") &&
-    hasOptional("parentMsgId", "string")
+    hasOptional("parentMsgId", "string") &&
+    // authToken: optional, but if present must be a non-empty string (a bearer token)
+    (o.authToken === undefined || (typeof o.authToken === "string" && o.authToken.length > 0))
   );
 };
 

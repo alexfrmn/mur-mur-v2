@@ -25,6 +25,16 @@ test("stableEnvelopePayload emits the exact canonical string (golden)", () => {
   );
 });
 
+test("stableEnvelopePayload appends authToken ONLY when present (back-compat for un-authed)", () => {
+  // absent → byte-identical to before the field existed (the golden above)
+  assert.ok(!stableEnvelopePayload(ENV).includes("authToken"));
+  // present → appended in a fixed FINAL position, so it is covered by the signature
+  assert.equal(
+    stableEnvelopePayload({ ...ENV, authToken: "MURMUR-AUTH:tok" }),
+    '{"schemaVersion":"1.0","msgId":"m1","conversationId":"c1","senderAgentId":"agent-a","recipients":["agent-b","agent-c"],"createdAt":"2026-06-22T00:00:00.000Z","payloadCiphertext":"ct","payloadNonce":"no","authToken":"MURMUR-AUTH:tok"}',
+  );
+});
+
 test("stableEnvelopePayload excludes the signature field (it is what gets signed)", () => {
   const signed = stableEnvelopePayload(ENV);
   const unsigned = stableEnvelopePayload({ ...ENV, signature: "" });

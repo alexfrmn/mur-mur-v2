@@ -49,6 +49,15 @@ discriminated structurally — `presenceVersion: "1.0"` for presence, `kind` for
 | `traceId` | — | string | |
 | `sequence` | — | number | |
 | `parentMsgId` | — | string | |
+| `authToken` | — | string | non-empty if present; bearer (`MURMUR-AUTH:…`) |
+
+**`authToken` is part of the signed payload.** When present it is appended to
+`stableEnvelopePayload` in a fixed final position, so it cannot be stripped or swapped
+without invalidating the signature. When absent, the signing payload is byte-identical
+to envelopes from before the field existed (forward/backward compatible). Verification is a
+runtime concern (`@murmurv2/federation` `verifyAuthToken`), not a schema constraint;
+ingress enforcement (an `authorizeInbound` helper gated by `MURMUR_ENFORCE_AUTH`) is
+forthcoming in auth/authz #47 PR-D.
 
 ## AckV1
 
