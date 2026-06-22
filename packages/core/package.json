@@ -1,6 +1,6 @@
 {
   "name": "@murmurv2/core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -26,5 +26,5 @@
   "publishConfig": {
     "access": "public"
   },
-  "description": "Murmur V2 core — EnvelopeV1/AckV1 wire types, SQLite outbox + dedupe stores, machine-readable protocol schema."
+  "description": "Murmur V2 core \u2014 EnvelopeV1/AckV1 wire types, SQLite outbox + dedupe stores, machine-readable protocol schema."
 }

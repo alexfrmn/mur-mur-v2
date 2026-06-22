@@ -47,18 +47,18 @@ A **murmuration** is one of nature's most extraordinary phenomena — thousands 
 
 ---
 
-## What's New in v2.2
+## What's New in v2.3
 
-- **Published on npm.** All packages are public under the [`@murmurv2`](https://www.npmjs.com/org/murmurv2) scope (MIT) — `npm install @murmurv2/core` (and the rest). See [Install](#install).
-- **WebSocket transport adapter.** `@murmurv2/broker-ws` — relay + broker client with envelope delivery, ACK correlation, dedupe, and invalid-envelope NACKs (browser/edge deployment pending).
-- **Roster-backed auth tokens.** Signed audience/scope/time-windowed tokens verified against the federation roster (no embedded trust root) — `@murmurv2/federation`.
-- **Machine-readable protocol schema + conformance suite.** Draft 2020-12 JSON Schema for `EnvelopeV1`/`AckV1` (`@murmurv2/core/schema`) + a compatibility matrix; conformance tests keep the schema and the runtime guard in lock-step.
-- **Durable JetStream transport (opt-in).** Turn on at-least-once durability with NATS JetStream — finite redelivery (`max_deliver`), explicit ACK, dead-letter on exhaustion — while keeping the SQLite outbox as the transactional source of truth. Default-OFF; set `MURMUR_JETSTREAM=1` to enable.
-- **Federation (live-proven in isolation; no real partner yet).** `org/agentId` addressing, an Ed25519-signed key directory, a `fed.*` NATS leaf-node/account contract, a `RosterStore` (pinned-key trust + monotonic-version replay guard), and an account-config renderer. Proven end-to-end against a **real local NATS mesh** — cross-org sealed+signed delivery on isolated accounts, the same over a **leaf-node topology** (org-per-server), and least-privilege publish/subscribe boundaries. Still **not wired to a second real partner org** (the only remaining gate).
-- **A2A bridge (live client round-trip; mock internal counterpart).** A bridge against the industry-standard [A2A protocol](https://a2aproject.github.io/A2A/). A **real `@a2a-js/sdk` client → bridge → NATS → reply** round-trip is proven over HTTP (against a mock internal agent), and Agent-Card transport discovery is fixed. Still **not connected to a real remote A2A agent**.
-- **Native wake.** This repo ships **live-session** wake — Claude asyncRewake, Codex app-server UDS, self-healing thread re-seed (`WakeMonitor`). **Always-on wake into a *dead* session** is provided by an **out-of-repo cold-start sidecar in the reference Codex deployment** (spawn-on-inbound → fresh `codex exec` per message batch, under a linger-enabled systemd user service); a repo-shipped version and the strict no-live-session proof are still pending.
+- **Agent discovery — complete.** Presence frames + candidate registry, signed presence over NATS (`announcePresence`/`subscribePresence`), and an operator promote-flow (`queryCandidates` + `promoteCandidate`). Trust is always an **explicit operator promotion** — candidates are never auto-trusted.
+- **Message streaming — complete.** Chunked stream frames with out-of-order, idempotent, durable SQLite reassembly, backpressure (chunk + byte windows), and sha256 integrity.
+- **Auth/authz enforcement.** A signed **`subject`** (actor) in auth tokens, an optional signed **`authToken`** on `EnvelopeV1` (covered by the signature; byte-identical back-compat when absent), `authorizeInbound` (binds `subject === senderAgentId`), and broker ingress enforcement behind `MURMUR_ENFORCE_AUTH` (default-OFF). *Daemon end-to-end wiring is the remaining step.*
+- **Conformance + versioned protocol spec — all wire types.** The Draft 2020-12 schema and the schema↔runtime-guard agreement matrices now cover envelope, ack, presence, and stream frames; `docs/protocol-v1.md` + `docs/protocol-compatibility.md` document them.
+- **Validated: real cross-host A2A.** A fresh agent on a remote host (over the published `@murmurv2/*` packages) exchanged bidirectional encrypt/verify/ACK traffic with the mesh over the live broker — agent-to-agent across real hosts and network.
+- **Single canonical signing payload.** `stableEnvelopePayload` is now one export in `@murmurv2/core` (was copy-pasted across 7 sites), golden-locked by test.
 
-See [CHANGELOG.md](CHANGELOG.md) for the full list.
+> npm packages re-publish at `0.2.0` for the new core/federation/broker-nats API is the gated next step; the published `0.1.0` predates it.
+
+See [CHANGELOG.md](CHANGELOG.md) for the full list (incl. v2.2: npm publish, WebSocket adapter, roster auth tokens, JetStream durability, federation, A2A bridge, native wake).
 
 ## Install
 
@@ -471,17 +471,17 @@ See [protocol-v1.md](docs/protocol-v1.md) for the full specification.
 
 ### In Progress
 - [ ] **Federation (v2.1)** — addressing + Ed25519 signed key directory + `fed.*` contract + account-config renderer + `RosterStore` (pinned-key trust + monotonic-version replay guard) are **live-proven against a real local NATS mesh**: cross-org sealed+signed delivery on isolated accounts, the same over a **leaf-node topology** (org-per-server), and least-privilege pub/sub permission boundaries (`integration/` smokes, cross-verified). Remaining gate: **not yet wired to a second real partner org**
-- [ ] **A2A interop bridge (v2.1)** — a **real `@a2a-js/sdk` client → bridge → NATS → reply round-trip is proven** over HTTP (against a mock internal agent), and Agent-Card transport discovery is fixed. Remaining gate: **not yet connected to a real remote A2A agent**
+- [ ] **A2A interop bridge (v2.1)** — a **real `@a2a-js/sdk` client → bridge → NATS → reply round-trip is proven** over HTTP (against a mock internal agent), and Agent-Card transport discovery is fixed. Agent-to-agent **over the Murmur mesh** is separately proven **cross-host** (a fresh remote agent on published npm did bidirectional encrypt/verify/ACK with the mesh over the live broker). Remaining gate: the A2A *protocol* bridge against a **real remote A2A agent**
 - [ ] **Always-on wake (dead session) (v2.1)** — a cold-start spawn-on-inbound sidecar (fresh `codex exec` per batch, exactly-once, linger-enabled systemd user service) exists in the **reference Codex deployment, outside this repo**; a repo-shipped version and the strict no-live-session proof remain pending
-- [ ] **Auth/authz token model** — roster-backed signed tokens with audience/scope/time verification are coded and unit-tested; remaining gate: wire token enforcement into live transports/bridges
+- [ ] **Auth/authz enforcement** — token model (roster-backed, audience/scope/time + signed `subject` actor), optional signed `EnvelopeV1.authToken`, `authorizeInbound` (binds `subject === senderAgentId`), and broker ingress enforcement behind `MURMUR_ENFORCE_AUTH` (default-OFF, NACK `auth-rejected:<reason>`) are **shipped**; remaining gate: wire it into the daemon (read the flag + build the authorizer from the roster) so it enforces end-to-end
 - [ ] **WebSocket transport adapter** — relay + broker client are coded and unit-tested for envelope delivery, ACK correlation, dedupe, and invalid-envelope NACKs; remaining gate: browser/edge deployment examples and hardening
 - [x] Prometheus metrics exporter — outbox depth, delivery latency, error rates
 - [x] **npm package publishing** — all 12 `@murmurv2/*` packages published public on npm (MIT); `security` + `observability` @ `0.1.1` (declared `@noble/*` / `better-sqlite3` runtime deps), the rest @ `0.1.0`
 - [x] **NATS native request-reply** — wake-accelerated `murmur_request`: a read-only ephemeral NATS tap returns the reply as soon as it lands; the SQLite store-poll stays the durable fallback and the daemon stays source of truth for decrypt
 
 ### Planned (next wave)
-- [ ] **Message streaming** — *PR1 merged:* pure core stream frames (start/chunk/end), UTF-8-safe chunking, in-memory reassembler (out-of-order + idempotent + conflict-reject), backpressure predicate (chunk + byte windows). PR2: NATS wiring + durable reassembly + sha256 integrity
-- [ ] **Agent discovery protocol** — *PR1 merged:* presence frames + candidate registry (ttl expiry, dedupe, out-of-order guard). Trust stays an explicit operator promote — candidates are never auto-trusted. PR2: NATS announce/listen (`announcePresence` / `subscribePresence`) + signed presence frames. PR3: operator promote-flow + a query/roster API
+- [x] **Message streaming** — stream frames (start/chunk/end), UTF-8-safe chunking, in-memory + durable SQLite reassembly (out-of-order, idempotent, conflict-reject), backpressure (chunk + byte windows), sha256 integrity, ACK-window
+- [x] **Agent discovery protocol** — presence frames + candidate registry (ttl expiry, dedupe, out-of-order guard), signed presence over NATS (`announcePresence`/`subscribePresence`), operator promote-flow (`queryCandidates`/`promoteCandidate`). Trust stays an explicit operator promotion — candidates are never auto-trusted
 - [x] Reference deployment examples — docker-compose (`deploy/docker-compose.messaging.yml`) + Kubernetes manifests (`deploy/kubernetes/`)
 - [x] Conformance test suite — schema↔guard agreement matrices for every wire type (`packages/core/test/conformance.test.mjs`); port the fixtures to check a third-party implementation
 - [x] Versioned protocol spec — machine-readable schema (`protocol-v1.schema.json`) + prose ([`docs/protocol-v1.md`](docs/protocol-v1.md)) + compatibility matrix ([`docs/protocol-compatibility.md`](docs/protocol-compatibility.md)) covering envelope, ack, presence, and stream frames

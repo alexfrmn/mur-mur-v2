@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Pending
+- **Auth enforcement end-to-end** — the broker ingress hook + `authorizeInbound` exist; the daemon does not yet wire them (so `MURMUR_ENFORCE_AUTH` is not enforced end-to-end). Requires daemon roster/identity wiring + token provisioning.
+- **npm republish @ 0.2.0** — `@murmurv2/core` (and dependents) export new API this release (`stableEnvelopePayload`, `EnvelopeV1.authToken`, stream guards, `authorizeInbound`, `InboundAuthorizer`); consumers importing them need a republished core (published `0.1.0` predates them).
+
+## [2.3.0] - 2026-06-22
+
+### Added
+
+- **Agent discovery — complete.** Presence frames + candidate registry (ttl expiry, dedupe, out-of-order guard); signed presence with NATS `announcePresence`/`subscribePresence`; operator promote-flow (`queryCandidates` + `promoteCandidate`) returning the live nested peer-config entry. Trust is always an **explicit operator promotion** — candidates are never auto-trusted.
+- **Message streaming — complete.** Stream frames (`stream.start`/`chunk`/`end`), UTF-8-safe chunking, in-memory + durable SQLite reassembly (out-of-order, idempotent, conflict-reject), backpressure (chunk + byte windows), sha256 per-chunk/whole-stream integrity, and an ACK-window.
+- **Auth/authz enforcement mechanism** — `signAuthToken`/`verifyAuthToken` now carry a signed **`subject`** (actor); `EnvelopeV1` gains an optional, signed **`authToken`** (bearer `MURMUR-AUTH:…`, appended to the canonical payload only when present → byte-identical back-compat when absent); `@murmurv2/federation` `authorizeInbound` verifies it and binds `subject === senderAgentId`; `@murmurv2/broker-nats` enforces at ingress via an injected `InboundAuthorizer` hook behind `MURMUR_ENFORCE_AUTH` (default OFF, NACK `auth-rejected:<reason>`, never delivered). *Daemon end-to-end wiring pending (see Unreleased).*
+- **Conformance suite — extended to every wire type.** `PresenceFrameV1`, `SignedPresenceFrameV1`, `StreamStart`/`StreamChunk`/`StreamEnd` (+ a discriminated `StreamFrame` `oneOf`) added to `protocol-v1.schema.json` and to schema↔runtime-guard agreement matrices; new structural guards `isStreamStart`/`isStreamChunk`/`isStreamEnd`/`isStreamFrame`.
+- **Versioned protocol spec.** `docs/protocol-v1.md` (prose lifecycle for envelope, discovery, streaming) + `docs/protocol-compatibility.md` (field tables + per-type validation entrypoints + runtime-only-checks boundary) covering all wire types.
+
+### Changed
+
+- **`stableEnvelopePayload` centralized** into `@murmurv2/core` as the single canonical signing form (was byte-identically copy-pasted across 7 sites: mcp-server, daemon, bridge-a2a, shell-send, demos, agent-runner example, federation live test). Golden-locked by test.
+
+### Fixed
+
+- De-flaked the `mcp-request-reply` C2 long-poll-timeout test (real-timer boundary race → injectable fake clock).
+
+### Validated
+
+- **Real cross-host A2A.** A fresh Murmur agent deployed on Phoenix/agent-hq over the **published** `@murmurv2/*` packages connected to the live broker over Tailscale and exchanged **bidirectional** encrypt/verify/ACK messages with JARVIS — exercising the mesh across real hosts and network (closes the "real mesh deploy" mechanism gate; a second real partner *org* for federation remains an external gate).
+
 ## [2.2.0] - 2026-06-22
 
 ### Added

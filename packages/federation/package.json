@@ -1,6 +1,6 @@
 {
   "name": "@murmurv2/federation",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -25,5 +25,5 @@
     "dist/src",
     "LICENSE"
   ],
-  "description": "Murmur V2 federation — org/agent addressing, Ed25519 signed roster + RosterStore, roster-backed auth tokens."
+  "description": "Murmur V2 federation \u2014 org/agent addressing, Ed25519 signed roster + RosterStore, roster-backed auth tokens."
 }
