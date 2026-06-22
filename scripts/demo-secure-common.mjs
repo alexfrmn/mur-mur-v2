@@ -1,6 +1,10 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { stableEnvelopePayload } from "@murmurv2/core";
 import { createKeyPair, createSigningKeyPair, getCryptoProvider } from "@murmurv2/security";
+
+// Re-export the canonical signing form from @murmurv2/core for the demo scripts.
+export { stableEnvelopePayload };
 
 const DEFAULT_KEYS_PATH = process.env.DEMO_KEYS_PATH || ".data/demo-keys.json";
 
@@ -40,19 +44,6 @@ export const policyFromConfig = (cfg) => ({
   },
 });
 
-export const stableEnvelopePayload = (envelope) => {
-  const payload = {
-    schemaVersion: envelope.schemaVersion,
-    msgId: envelope.msgId,
-    conversationId: envelope.conversationId,
-    senderAgentId: envelope.senderAgentId,
-    recipients: [...envelope.recipients],
-    createdAt: envelope.createdAt,
-    payloadCiphertext: envelope.payloadCiphertext,
-    payloadNonce: envelope.payloadNonce,
-  };
-  return JSON.stringify(payload);
-};
 
 export const ensureDemoKeys = async (keysPath = DEFAULT_KEYS_PATH) => {
   try {

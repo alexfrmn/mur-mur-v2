@@ -26,7 +26,7 @@ import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import express from "express";
 import { StringCodec, connect, type NatsConnection, type Subscription } from "nats";
-import { isEnvelopeV1, type AckV1, type EnvelopeV1 } from "@murmurv2/core";
+import { isEnvelopeV1, stableEnvelopePayload, type AckV1, type EnvelopeV1 } from "@murmurv2/core";
 import { decryptPayload, encryptPayload, signEnvelope } from "@murmurv2/security";
 import {
   DefaultRequestHandler,
@@ -84,25 +84,9 @@ export interface InboundTask {
   text: string;
 }
 
-/**
- * Mesh-canonical signing input. MUST stay byte-identical to
- * `scripts/murmur-daemon.mjs` + `packages/mcp-server` `stableEnvelopePayload`,
- * or internal agents reject the bridge's signature.
- * TODO(core): promote this single source of truth into @murmurv2/core (it is
- * currently duplicated across daemon / mcp-server / demos / this bridge).
- */
-export function stableEnvelopePayload(envelope: EnvelopeV1): string {
-  return JSON.stringify({
-    schemaVersion: envelope.schemaVersion,
-    msgId: envelope.msgId,
-    conversationId: envelope.conversationId,
-    senderAgentId: envelope.senderAgentId,
-    recipients: [...envelope.recipients],
-    createdAt: envelope.createdAt,
-    payloadCiphertext: envelope.payloadCiphertext,
-    payloadNonce: envelope.payloadNonce,
-  });
-}
+// Mesh-canonical signing input now lives in @murmurv2/core (single source of truth).
+// Re-exported so existing importers (and this bridge's tests) keep their entrypoint.
+export { stableEnvelopePayload };
 
 type SealConfig = Pick<
   BridgeA2AConfig,

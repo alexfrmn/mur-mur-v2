@@ -32,6 +32,26 @@ export interface AckV1 {
   at: string;
 }
 
+/**
+ * Canonical signing payload for an EnvelopeV1 — the SINGLE SOURCE OF TRUTH every
+ * signer and verifier MUST use, so signatures interoperate across the whole mesh
+ * (mcp-server, daemon, bridges, runner, demos). The `signature` field is excluded
+ * by design (it signs everything else) and field order is fixed. Changing the shape
+ * or order is a wire-breaking change: update every signer together and bump the
+ * protocol. Previously copy-pasted in 5+ places; keep it here only.
+ */
+export const stableEnvelopePayload = (envelope: EnvelopeV1): string =>
+  JSON.stringify({
+    schemaVersion: envelope.schemaVersion,
+    msgId: envelope.msgId,
+    conversationId: envelope.conversationId,
+    senderAgentId: envelope.senderAgentId,
+    recipients: [...envelope.recipients],
+    createdAt: envelope.createdAt,
+    payloadCiphertext: envelope.payloadCiphertext,
+    payloadNonce: envelope.payloadNonce,
+  });
+
 export interface DedupeStore {
   seen(msgId: string, consumerId: string): Promise<boolean>;
   markSeen(msgId: string, consumerId: string): Promise<void>;
