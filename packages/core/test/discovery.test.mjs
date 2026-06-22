@@ -226,13 +226,17 @@ test("promoteCandidate yields a trusted-peer entry from a live candidate", () =>
   const reg = new CandidateRegistry();
   const now = at("2026-06-22T13:00:10.000Z");
   reg.observe(frame(), now);
-  const peer = promoteCandidate(reg, "agent-x", now);
-  assert.ok(peer);
-  assert.equal(peer.agentId, "agent-x");
-  assert.equal(peer.encryptionPublicKey, "enc-pub");
-  assert.equal(peer.signingPublicKey, "sig-pub");
-  assert.equal(peer.subject, "msg.agent-x");
-  assert.equal(peer.promotedAt, now);
+  const promoted = promoteCandidate(reg, "agent-x", now);
+  assert.ok(promoted);
+  assert.equal(promoted.agentId, "agent-x");
+  assert.equal(promoted.promotedAt, now);
+  // peer is the literal nested value the live config expects at peers[agentId]
+  // (matches murmur-join / murmur-add-peer / mcp-server send paths)
+  assert.deepEqual(promoted.peer, {
+    encryption: { publicKey: "enc-pub" },
+    signing: { publicKey: "sig-pub" },
+    subject: "msg.agent-x",
+  });
 });
 
 test("promoteCandidate returns null for unknown or expired candidates and never mutates trust", () => {

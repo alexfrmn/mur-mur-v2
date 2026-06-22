@@ -257,12 +257,30 @@ export const queryCandidates = (
       (query.subject === undefined || c.subject === query.subject),
   );
 
-/** A trusted-peer entry derived from a candidate — the shape a peer config expects. */
+/**
+ * The exact value to set at `agent-config.peers[agentId]`. Mirrors the nested
+ * key shape that every live writer/reader uses — `murmur-join`, `murmur-add-peer`,
+ * and the daemon / mcp-server send paths (`peer.encryption.publicKey`,
+ * `peer.signing.publicKey`). Keep this aligned with those if the config evolves.
+ */
+export interface PeerConfigEntry {
+  encryption: { publicKey: string };
+  signing: { publicKey: string };
+  subject: string;
+}
+
+/**
+ * Result of promoting a discovered candidate: the trusted-peer config entry plus
+ * promotion metadata. The `peer` field is the literal value to wire into the live
+ * config — `config.peers[result.agentId] = result.peer` — so it must match the
+ * nested-key {@link PeerConfigEntry} shape the daemon/mcp-server read, NOT the flat
+ * candidate shape. `agentId` / `promotedAt` are metadata that live OUTSIDE the
+ * config value (they are the map key and an audit timestamp, not peer fields).
+ */
 export interface PromotedPeer {
   agentId: string;
-  encryptionPublicKey: string;
-  signingPublicKey: string;
-  subject: string;
+  /** Insert verbatim at `agent-config.peers[agentId]`. */
+  peer: PeerConfigEntry;
   /** Epoch ms the operator promoted this candidate. */
   promotedAt: number;
 }
@@ -273,7 +291,10 @@ export interface PromotedPeer {
  * operator action or an approved policy) decides to promote, and this returns the
  * peer entry to add to the trusted peer set. It does NOT add the peer itself and
  * does NOT mutate the registry — wiring the entry into the live peer config /
- * daemon remains the caller's deliberate action.
+ * daemon remains the caller's deliberate action:
+ *
+ *   const promoted = promoteCandidate(registry, agentId, Date.now());
+ *   if (promoted) config.peers[promoted.agentId] = promoted.peer;
  *
  * Returns null if there is no live (non-expired) candidate for `agentId`.
  */
@@ -286,9 +307,11 @@ export const promoteCandidate = (
   if (!c) return null;
   return {
     agentId: c.agentId,
-    encryptionPublicKey: c.encryptionPublicKey,
-    signingPublicKey: c.signingPublicKey,
-    subject: c.subject,
+    peer: {
+      encryption: { publicKey: c.encryptionPublicKey },
+      signing: { publicKey: c.signingPublicKey },
+      subject: c.subject,
+    },
     promotedAt: now,
   };
 };
