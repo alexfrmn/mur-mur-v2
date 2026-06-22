@@ -18,7 +18,7 @@ const makeOutbox = (records) => {
   const state = new Map(records.map((r) => [r.msgId, { ...r }]));
   return {
     async claimDue() {
-      return [...state.values()];
+      return [...state.values()].filter((r) => ["pending", "failed"].includes(r.status));
     },
     async markSent(msgId) {
       state.get(msgId).status = "sent";
@@ -34,8 +34,13 @@ const makeOutbox = (records) => {
       row.status = "dlq";
       row.lastError = err;
     },
-    async markAcked() {},
+    async markAcked(msgId) {
+      state.get(msgId).status = "acked";
+    },
     async enqueue() {},
+    async listInFlight() {
+      return [...state.values()].filter((r) => r.status === "sent");
+    },
     __state: state,
   };
 };
@@ -67,4 +72,49 @@ test("flushOutbox retries transient failures with failed status", async () => {
   assert.equal(row.status, "failed");
   assert.equal(row.lastError, "network-timeout");
   assert.ok(new Date(row.nextAttemptAt).getTime() >= Date.now());
+});
+
+test("flushOutbox respects durable ACK window before publishing more chunks", async () => {
+  const sentEnvelope = {
+    ...envelope,
+    msgId: "msg-sent",
+    payloadCiphertext: Buffer.from("already in flight").toString("base64"),
+  };
+  const pendingEnvelope = {
+    ...envelope,
+    msgId: "msg-pending",
+    payloadCiphertext: Buffer.from("next chunk").toString("base64"),
+  };
+  const outbox = makeOutbox([
+    { msgId: sentEnvelope.msgId, subject: "s", envelope: sentEnvelope, attempts: 1, status: "sent", nextAttemptAt: new Date().toISOString() },
+    { msgId: pendingEnvelope.msgId, subject: "s", envelope: pendingEnvelope, attempts: 0, status: "pending", nextAttemptAt: new Date().toISOString() },
+  ]);
+  const published = [];
+  const broker = new NatsBroker({ url: "nats://invalid:4222" });
+  broker.publish = async (_subject, env) => {
+    published.push(env.msgId);
+  };
+
+  await broker.flushOutbox({
+    outbox,
+    ackWindow: {
+      maxInFlightChunks: 1,
+      maxInFlightBytes: 1024,
+    },
+  });
+
+  assert.deepEqual(published, []);
+  assert.equal(outbox.__state.get(pendingEnvelope.msgId).status, "pending");
+
+  await outbox.markAcked(sentEnvelope.msgId);
+  await broker.flushOutbox({
+    outbox,
+    ackWindow: {
+      maxInFlightChunks: 1,
+      maxInFlightBytes: 1024,
+    },
+  });
+
+  assert.deepEqual(published, [pendingEnvelope.msgId]);
+  assert.equal(outbox.__state.get(pendingEnvelope.msgId).status, "sent");
 });

@@ -13,12 +13,14 @@ import {
   applyJitter,
   computeBackoffMs,
   createAck,
+  estimateBase64DecodedBytes,
   type EnvelopeV1,
   isEnvelopeV1,
   type DedupeStore,
   type OutboxStore,
   type AckV1,
   type SecurityPolicy,
+  streamBackpressureAllowsSend,
   validateEnvelopePolicy,
 } from "@murmurv2/core";
 
@@ -49,6 +51,11 @@ export interface BrokerStatusEvent {
   type: string;
   data?: unknown;
   reconnects: number;
+}
+
+export interface AckWindowConfig {
+  maxInFlightChunks: number;
+  maxInFlightBytes: number;
 }
 
 interface JetStreamConsumerAdvisory {
@@ -560,6 +567,7 @@ export class NatsBroker {
     baseBackoffMs?: number;
     jitterRatio?: number;
     ackTimeoutMs?: number;
+    ackWindow?: AckWindowConfig;
     policy?: SecurityPolicy;
   }): Promise<void> {
     const maxAttempts = params.maxAttempts ?? 5;
@@ -567,11 +575,31 @@ export class NatsBroker {
       await params.outbox.requeueStaleSent(params.ackTimeoutMs);
     }
     const due = await params.outbox.claimDue(params.batchSize ?? 50);
+    const inFlight = params.ackWindow && params.outbox.listInFlight
+      ? await params.outbox.listInFlight()
+      : [];
+    let inFlightChunks = inFlight.length;
+    let inFlightBytes = inFlight.reduce((sum, rec) => sum + estimateBase64DecodedBytes(rec.envelope.payloadCiphertext), 0);
 
     for (const rec of due) {
+      const nextChunkBytes = Math.max(1, estimateBase64DecodedBytes(rec.envelope.payloadCiphertext));
+      if (params.ackWindow && !streamBackpressureAllowsSend({
+        inFlightChunks,
+        inFlightBytes,
+        nextChunkBytes,
+        maxInFlightChunks: params.ackWindow.maxInFlightChunks,
+        maxInFlightBytes: params.ackWindow.maxInFlightBytes,
+      })) {
+        break;
+      }
+
       try {
         await this.publish(rec.subject, rec.envelope, params.policy);
         await params.outbox.markSent(rec.msgId);
+        if (params.ackWindow) {
+          inFlightChunks += 1;
+          inFlightBytes += nextChunkBytes;
+        }
       } catch (err) {
         const nextAttemptNum = rec.attempts + 1;
         const reason = err instanceof Error ? err.message : "publish-failed";

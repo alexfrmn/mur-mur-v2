@@ -2,12 +2,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   InMemoryStreamReassembler,
+  SQLiteStreamReassembler,
   chunkStreamText,
   createStreamEnd,
   createStreamChunk,
   createStreamStart,
+  sha256Hex,
   streamBackpressureAllowsSend,
 } from "../dist/src/index.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 test("createStreamStart and createStreamEnd frame stream boundaries without payload data", () => {
   const startedAt = "2026-06-22T13:00:00.000Z";
@@ -61,6 +66,42 @@ test("chunkStreamText splits UTF-8 text without exceeding max payload bytes", ()
     assert.ok(Buffer.byteLength(chunk.data, "utf8") <= 37);
   }
   assert.equal(chunks.map((chunk) => chunk.data).join(""), text);
+  assert.equal(chunks[0].sha256, sha256Hex(chunks[0].data));
+});
+
+test("InMemoryStreamReassembler verifies per-chunk and total sha256", () => {
+  const text = "integrity checked Привет";
+  const chunks = chunkStreamText({ streamId: "stream-sha", text, maxChunkBytes: 9 });
+  const end = createStreamEnd({
+    streamId: "stream-sha",
+    chunkCount: chunks.length,
+    totalBytes: Buffer.byteLength(text, "utf8"),
+    sha256: sha256Hex(text),
+  });
+  const reassembler = new InMemoryStreamReassembler();
+
+  assert.equal(reassembler.acceptEnd(end).status, "pending");
+  let result;
+  for (const chunk of chunks) result = reassembler.accept(chunk);
+
+  assert.equal(result.status, "complete");
+  assert.equal(result.text, text);
+  assert.equal(result.sha256, sha256Hex(text));
+});
+
+test("InMemoryStreamReassembler rejects chunk sha256 mismatch", () => {
+  const reassembler = new InMemoryStreamReassembler();
+  const chunk = createStreamChunk({
+    streamId: "stream-bad-sha",
+    chunkIndex: 0,
+    chunkCount: 1,
+    data: "hello",
+  });
+
+  assert.throws(
+    () => reassembler.accept({ ...chunk, sha256: sha256Hex("HELLO") }),
+    /stream-chunk-sha256-mismatch:stream-bad-sha:0/,
+  );
 });
 
 test("chunkStreamText rejects invalid byte budgets", () => {
@@ -109,9 +150,37 @@ test("InMemoryStreamReassembler rejects conflicting duplicate chunk data", () =>
   reassembler.accept(chunk);
 
   assert.throws(
-    () => reassembler.accept({ ...chunk, data: "HELLO " }),
+    () => reassembler.accept({ ...chunk, data: "HELLO ", sha256: sha256Hex("HELLO ") }),
     /stream-chunk-conflict:stream-3:0/,
   );
+});
+
+test("SQLiteStreamReassembler durably completes after restart", () => {
+  const dir = mkdtempSync(join(tmpdir(), "murmur-stream-"));
+  const dbPath = join(dir, "stream.db");
+  const text = "durable stream payload survives process restart";
+  const chunks = chunkStreamText({ streamId: "stream-sqlite", text, maxChunkBytes: 8 });
+  const end = createStreamEnd({
+    streamId: "stream-sqlite",
+    chunkCount: chunks.length,
+    totalBytes: Buffer.byteLength(text, "utf8"),
+    sha256: sha256Hex(text),
+  });
+
+  const first = new SQLiteStreamReassembler(dbPath);
+  first.accept(chunks[1]);
+  first.acceptEnd(end);
+
+  const second = new SQLiteStreamReassembler(dbPath);
+  let result;
+  for (const chunk of [chunks[0], ...chunks.slice(2)]) {
+    result = second.accept(chunk);
+  }
+
+  assert.equal(result.status, "complete");
+  assert.equal(result.text, text);
+  assert.equal(result.sha256, sha256Hex(text));
+  assert.equal(second.get("stream-sqlite"), undefined);
 });
 
 test("streamBackpressureAllowsSend enforces chunk and byte windows", () => {
