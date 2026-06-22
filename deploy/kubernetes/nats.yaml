@@ -1,0 +1,80 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: murmur-nats-auth
+type: Opaque
+stringData:
+  NATS_TOKEN: CHANGE_ME_NATS_TOKEN
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: murmur-nats
+  labels:
+    app.kubernetes.io/name: murmur-nats
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: murmur-nats
+  ports:
+    - name: nats
+      port: 4222
+      targetPort: nats
+    - name: monitor
+      port: 8222
+      targetPort: monitor
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: murmur-nats
+  labels:
+    app.kubernetes.io/name: murmur-nats
+spec:
+  serviceName: murmur-nats
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: murmur-nats
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: murmur-nats
+    spec:
+      containers:
+        - name: nats
+          image: nats:2.10-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - exec nats-server -js -sd /data/jetstream -m 8222 --auth "$NATS_TOKEN"
+          env:
+            - name: NATS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: murmur-nats-auth
+                  key: NATS_TOKEN
+          ports:
+            - name: nats
+              containerPort: 4222
+            - name: monitor
+              containerPort: 8222
+          readinessProbe:
+            tcpSocket:
+              port: nats
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          volumeMounts:
+            - name: nats-data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: nats-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi

@@ -392,6 +392,18 @@ docker compose -f deploy/docker-compose.messaging.yml up -d
 node scripts/murmur-daemon.mjs
 ```
 
+### Kubernetes
+
+Reference manifests for a private in-cluster NATS broker plus one Murmur daemon
+live in [`deploy/kubernetes`](deploy/kubernetes/README.md). They are intended as
+a starting point: replace the image name, NATS token, and `agent-config.json`
+secret before applying. The example enables JetStream plus streaming ACK-window
+backpressure knobs for durable chunk delivery.
+
+```bash
+kubectl apply -k deploy/kubernetes
+```
+
 ### Notification Adapters
 
 ```bash

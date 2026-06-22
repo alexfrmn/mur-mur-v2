@@ -39,6 +39,40 @@ const jetstreamConfig = config.jetstream || {};
 const jetstreamEnabled = jetstreamConfig.enabled ?? process.env.MURMUR_JETSTREAM === "1";
 const jetstreamStream = jetstreamConfig.stream || process.env.MURMUR_JETSTREAM_STREAM || "MURMUR";
 const jetstreamSubjects = jetstreamConfig.subjects || ["msg.>", "ack.>"];
+const streamingConfig = config.streaming || {};
+const ackWindowConfig = streamingConfig.ackWindow || {};
+const firstDefined = (...values) => values.find((value) => value !== undefined && value !== null && value !== "");
+const optionalPositiveInteger = (name, value) => {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`${name}-invalid`);
+  return parsed;
+};
+const jetstreamMaxDeliver = optionalPositiveInteger(
+  "jetstream-max-deliver",
+  firstDefined(jetstreamConfig.maxDeliver, process.env.MURMUR_JETSTREAM_MAX_DELIVER),
+);
+const jetstreamAckWaitMs = optionalPositiveInteger(
+  "jetstream-ack-wait-ms",
+  firstDefined(jetstreamConfig.ackWaitMs, process.env.MURMUR_JETSTREAM_ACK_WAIT_MS),
+);
+const ackTimeoutMs = optionalPositiveInteger(
+  "ack-timeout-ms",
+  firstDefined(streamingConfig.ackTimeoutMs, process.env.MURMUR_ACK_TIMEOUT_MS),
+) ?? 15_000;
+const ackWindowEnabled = ackWindowConfig.enabled ?? process.env.MURMUR_STREAM_ACK_WINDOW === "1";
+const ackWindow = ackWindowEnabled
+  ? {
+      maxInFlightChunks: optionalPositiveInteger(
+        "stream-max-in-flight-chunks",
+        firstDefined(ackWindowConfig.maxInFlightChunks, process.env.MURMUR_STREAM_MAX_IN_FLIGHT_CHUNKS),
+      ) ?? 64,
+      maxInFlightBytes: optionalPositiveInteger(
+        "stream-max-in-flight-bytes",
+        firstDefined(ackWindowConfig.maxInFlightBytes, process.env.MURMUR_STREAM_MAX_IN_FLIGHT_BYTES),
+      ) ?? 4 * 1024 * 1024,
+    }
+  : undefined;
 const notifyTargets = normalizeNotifyTargets(config.notify);
 const envTelegramFallback = (() => {
   const botToken = process.env.MURMUR_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
@@ -60,6 +94,10 @@ log("info", "Daemon starting", {
   flushIntervalMs,
   jetstreamEnabled,
   jetstreamStream: jetstreamEnabled ? jetstreamStream : undefined,
+  jetstreamMaxDeliver,
+  jetstreamAckWaitMs,
+  ackTimeoutMs,
+  ackWindow,
   notifyTargets: effectiveNotifyTargets.map((t) => `${t.type}:${t.channel}`),
   notifyFallbackFromEnv: envTelegramFallback.length > 0,
 });
@@ -72,6 +110,8 @@ const broker = new NatsBroker({
   jetstream: jetstreamEnabled,
   stream: jetstreamEnabled ? jetstreamStream : undefined,
   streamSubjects: jetstreamSubjects,
+  jetstreamMaxDeliver,
+  jetstreamAckWaitMs,
 });
 
 const durableSafe = (value) => value.replace(/[^A-Za-z0-9_-]/g, "-");
@@ -224,7 +264,7 @@ let running = true;
 const flushLoop = async () => {
   while (running) {
     try {
-      await broker.flushOutbox({ outbox: store, maxAttempts: 5, ackTimeoutMs: 15_000 });
+      await broker.flushOutbox({ outbox: store, maxAttempts: 5, ackTimeoutMs, ackWindow });
     } catch (err) {
       log("error", "Outbox flush error", { error: err.message });
     }

@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: murmur-agent-config
+type: Opaque
+stringData:
+  agent-config.json: |
+    {
+      "agentId": "agent-k8s-demo",
+      "natsUrl": "nats://murmur-nats.murmur.svc.cluster.local:4222",
+      "natsToken": "CHANGE_ME_NATS_TOKEN",
+      "subject": "msg.agent-k8s-demo",
+      "jetstream": {
+        "enabled": true,
+        "stream": "MURMUR",
+        "subjects": ["msg.>", "ack.>"],
+        "maxDeliver": 5,
+        "ackWaitMs": 30000
+      },
+      "streaming": {
+        "ackTimeoutMs": 15000,
+        "ackWindow": {
+          "enabled": true,
+          "maxInFlightChunks": 64,
+          "maxInFlightBytes": 4194304
+        }
+      },
+      "keys": {
+        "encryption": {
+          "publicKey": "CHANGE_ME_ENCRYPTION_PUBLIC_KEY",
+          "privateKey": "CHANGE_ME_ENCRYPTION_PRIVATE_KEY"
+        },
+        "signing": {
+          "publicKey": "CHANGE_ME_SIGNING_PUBLIC_KEY",
+          "privateKey": "CHANGE_ME_SIGNING_PRIVATE_KEY"
+        }
+      },
+      "peers": {
+        "agent-peer": {
+          "encryption": {
+            "publicKey": "CHANGE_ME_PEER_ENCRYPTION_PUBLIC_KEY"
+          },
+          "signing": {
+            "publicKey": "CHANGE_ME_PEER_SIGNING_PUBLIC_KEY"
+          },
+          "subject": "msg.agent-peer"
+        }
+      }
+    }
