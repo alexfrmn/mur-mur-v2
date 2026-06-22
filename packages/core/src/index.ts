@@ -3,6 +3,9 @@ import { mkdirSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+// Agent discovery (presence frames + candidate registry)
+export * from "./discovery.js";
+
 export type DeliveryMode = "at-least-once";
 
 export interface EnvelopeV1 {
@@ -568,6 +571,265 @@ export class SQLiteMessageStore {
     return rows;
   }
 }
+
+export type StreamFrameKind = "stream.start" | "stream.chunk" | "stream.end";
+
+export interface StreamStart {
+  kind: "stream.start";
+  streamId: string;
+  chunkCount: number;
+  totalBytes: number;
+  contentType?: string;
+  startedAt?: string;
+}
+
+export interface StreamChunk {
+  kind: "stream.chunk";
+  streamId: string;
+  chunkIndex: number;
+  chunkCount: number;
+  data: string;
+  isLast: boolean;
+}
+
+export interface StreamEnd {
+  kind: "stream.end";
+  streamId: string;
+  chunkCount: number;
+  totalBytes: number;
+  digest?: string;
+}
+
+export type StreamFrame = StreamStart | StreamChunk | StreamEnd;
+
+export interface ChunkStreamTextInput {
+  streamId: string;
+  text: string;
+  maxChunkBytes: number;
+}
+
+export interface CreateStreamStartInput {
+  streamId: string;
+  chunkCount: number;
+  totalBytes: number;
+  contentType?: string;
+  startedAt?: string;
+}
+
+export interface CreateStreamChunkInput {
+  streamId: string;
+  chunkIndex: number;
+  chunkCount: number;
+  data: string;
+}
+
+export interface CreateStreamEndInput {
+  streamId: string;
+  chunkCount: number;
+  totalBytes: number;
+  digest?: string;
+}
+
+export interface StreamReassemblyResult {
+  status: "pending" | "duplicate" | "complete";
+  streamId: string;
+  receivedChunks: number;
+  chunkCount: number;
+  text?: string;
+}
+
+export interface StreamReassemblyState {
+  streamId: string;
+  chunkCount: number;
+  receivedChunks: number;
+}
+
+export interface StreamBackpressureWindow {
+  inFlightChunks: number;
+  inFlightBytes: number;
+  nextChunkBytes: number;
+  maxInFlightChunks: number;
+  maxInFlightBytes: number;
+}
+
+const textEncoder = new TextEncoder();
+
+const utf8Bytes = (value: string): number => textEncoder.encode(value).byteLength;
+
+const assertPositiveInteger = (name: string, value: number): void => {
+  if (!Number.isInteger(value) || value < 1) throw new Error(`${name}-invalid`);
+};
+
+const assertNonNegativeInteger = (name: string, value: number): void => {
+  if (!Number.isInteger(value) || value < 0) throw new Error(`${name}-invalid`);
+};
+
+export const createStreamStart = (input: CreateStreamStartInput): StreamStart => {
+  if (!input.streamId) throw new Error("stream-id-required");
+  assertPositiveInteger("stream-chunk-count", input.chunkCount);
+  assertNonNegativeInteger("stream-total-bytes", input.totalBytes);
+  if (input.contentType !== undefined && input.contentType.length === 0) throw new Error("stream-content-type-invalid");
+  if (input.startedAt !== undefined && Number.isNaN(Date.parse(input.startedAt))) throw new Error("stream-started-at-invalid");
+
+  return {
+    kind: "stream.start",
+    streamId: input.streamId,
+    chunkCount: input.chunkCount,
+    totalBytes: input.totalBytes,
+    ...(input.contentType !== undefined ? { contentType: input.contentType } : {}),
+    ...(input.startedAt !== undefined ? { startedAt: input.startedAt } : {}),
+  };
+};
+
+export const createStreamChunk = (input: CreateStreamChunkInput): StreamChunk => {
+  if (!input.streamId) throw new Error("stream-id-required");
+  assertNonNegativeInteger("stream-chunk-index", input.chunkIndex);
+  assertPositiveInteger("stream-chunk-count", input.chunkCount);
+  if (input.chunkIndex >= input.chunkCount) throw new Error("stream-chunk-index-out-of-range");
+  if (input.data.length === 0) throw new Error("stream-chunk-data-required");
+
+  return {
+    kind: "stream.chunk",
+    streamId: input.streamId,
+    chunkIndex: input.chunkIndex,
+    chunkCount: input.chunkCount,
+    data: input.data,
+    isLast: input.chunkIndex === input.chunkCount - 1,
+  };
+};
+
+export const createStreamEnd = (input: CreateStreamEndInput): StreamEnd => {
+  if (!input.streamId) throw new Error("stream-id-required");
+  assertPositiveInteger("stream-chunk-count", input.chunkCount);
+  assertNonNegativeInteger("stream-total-bytes", input.totalBytes);
+  if (input.digest !== undefined && input.digest.length === 0) throw new Error("stream-digest-invalid");
+
+  return {
+    kind: "stream.end",
+    streamId: input.streamId,
+    chunkCount: input.chunkCount,
+    totalBytes: input.totalBytes,
+    ...(input.digest !== undefined ? { digest: input.digest } : {}),
+  };
+};
+
+export const chunkStreamText = (input: ChunkStreamTextInput): StreamChunk[] => {
+  if (!input.streamId) throw new Error("stream-id-required");
+  assertPositiveInteger("stream-max-chunk-bytes", input.maxChunkBytes);
+  if (input.text.length === 0) throw new Error("stream-text-required");
+
+  const parts: string[] = [];
+  let current = "";
+  let currentBytes = 0;
+
+  for (const symbol of input.text) {
+    const symbolBytes = utf8Bytes(symbol);
+    if (symbolBytes > input.maxChunkBytes) throw new Error("stream-symbol-exceeds-max-chunk-bytes");
+    if (current && currentBytes + symbolBytes > input.maxChunkBytes) {
+      parts.push(current);
+      current = symbol;
+      currentBytes = symbolBytes;
+    } else {
+      current += symbol;
+      currentBytes += symbolBytes;
+    }
+  }
+
+  if (current) parts.push(current);
+  return parts.map((data, index) => createStreamChunk({
+    streamId: input.streamId,
+    chunkIndex: index,
+    chunkCount: parts.length,
+    data,
+  }));
+};
+
+export class InMemoryStreamReassembler {
+  private readonly streams = new Map<string, { chunkCount: number; chunks: Map<number, string> }>();
+
+  accept(chunk: StreamChunk): StreamReassemblyResult {
+    this.validateChunk(chunk);
+    let state = this.streams.get(chunk.streamId);
+    if (!state) {
+      state = { chunkCount: chunk.chunkCount, chunks: new Map<number, string>() };
+      this.streams.set(chunk.streamId, state);
+    } else if (state.chunkCount !== chunk.chunkCount) {
+      throw new Error(`stream-chunk-count-conflict:${chunk.streamId}`);
+    }
+
+    const existing = state.chunks.get(chunk.chunkIndex);
+    if (existing !== undefined) {
+      if (existing !== chunk.data) throw new Error(`stream-chunk-conflict:${chunk.streamId}:${chunk.chunkIndex}`);
+      return {
+        status: "duplicate",
+        streamId: chunk.streamId,
+        receivedChunks: state.chunks.size,
+        chunkCount: state.chunkCount,
+      };
+    }
+
+    state.chunks.set(chunk.chunkIndex, chunk.data);
+    if (state.chunks.size !== state.chunkCount) {
+      return {
+        status: "pending",
+        streamId: chunk.streamId,
+        receivedChunks: state.chunks.size,
+        chunkCount: state.chunkCount,
+      };
+    }
+
+    const text = Array.from({ length: state.chunkCount }, (_, index) => state.chunks.get(index) ?? "").join("");
+    this.streams.delete(chunk.streamId);
+    return {
+      status: "complete",
+      streamId: chunk.streamId,
+      receivedChunks: state.chunkCount,
+      chunkCount: state.chunkCount,
+      text,
+    };
+  }
+
+  get(streamId: string): StreamReassemblyState | undefined {
+    const state = this.streams.get(streamId);
+    if (!state) return undefined;
+    return {
+      streamId,
+      chunkCount: state.chunkCount,
+      receivedChunks: state.chunks.size,
+    };
+  }
+
+  delete(streamId: string): boolean {
+    return this.streams.delete(streamId);
+  }
+
+  clear(): void {
+    this.streams.clear();
+  }
+
+  private validateChunk(chunk: StreamChunk): void {
+    if (chunk.kind !== "stream.chunk") throw new Error("stream-chunk-kind-invalid");
+    if (!chunk.streamId) throw new Error("stream-id-required");
+    assertNonNegativeInteger("stream-chunk-index", chunk.chunkIndex);
+    assertPositiveInteger("stream-chunk-count", chunk.chunkCount);
+    if (chunk.chunkIndex >= chunk.chunkCount) throw new Error("stream-chunk-index-out-of-range");
+    if (chunk.data.length === 0) throw new Error("stream-chunk-data-required");
+    if (chunk.isLast !== (chunk.chunkIndex === chunk.chunkCount - 1)) throw new Error("stream-chunk-last-flag-invalid");
+  }
+}
+
+export const streamBackpressureAllowsSend = (window: StreamBackpressureWindow): boolean => {
+  assertNonNegativeInteger("stream-in-flight-chunks", window.inFlightChunks);
+  assertNonNegativeInteger("stream-in-flight-bytes", window.inFlightBytes);
+  assertPositiveInteger("stream-next-chunk-bytes", window.nextChunkBytes);
+  assertPositiveInteger("stream-max-in-flight-chunks", window.maxInFlightChunks);
+  assertPositiveInteger("stream-max-in-flight-bytes", window.maxInFlightBytes);
+
+  return (
+    window.inFlightChunks < window.maxInFlightChunks &&
+    window.inFlightBytes + window.nextChunkBytes <= window.maxInFlightBytes
+  );
+};
 
 export const isEnvelopeV1 = (v: unknown): v is EnvelopeV1 => {
   if (!v || typeof v !== "object") return false;
