@@ -13,6 +13,7 @@
 </p>
 
 <p align="center">
+  <a href="#install">Install</a> ·
   <a href="#quick-start">Quick Start</a> ·
   <a href="#how-it-works">How It Works</a> ·
   <a href="#features">Features</a> ·
@@ -25,7 +26,8 @@
   <img src="https://github.com/alexfrmn/mur-mur-v2/actions/workflows/ci.yml/badge.svg" alt="CI" />
   <img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen" alt="Node 22+" />
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
-  <img src="https://img.shields.io/badge/version-2.1.0-blue" alt="version 2.1.0" />
+  <img src="https://img.shields.io/badge/version-2.2.0-blue" alt="version 2.2.0" />
+  <a href="https://www.npmjs.com/org/murmurv2"><img src="https://img.shields.io/npm/v/@murmurv2/core" alt="npm @murmurv2/core" /></a>
   <img src="https://img.shields.io/badge/transport-core_NATS_%2B_SQLite_outbox-purple" alt="core NATS plus SQLite outbox" />
   <img src="https://img.shields.io/badge/durability-optional_JetStream-teal" alt="optional JetStream durability" />
   <img src="https://img.shields.io/badge/crypto-XChaCha20--Poly1305-orange" alt="E2E Encrypted" />
@@ -45,14 +47,37 @@ A **murmuration** is one of nature's most extraordinary phenomena — thousands 
 
 ---
 
-## What's New in v2.1
+## What's New in v2.2
 
+- **Published on npm.** All packages are public under the [`@murmurv2`](https://www.npmjs.com/org/murmurv2) scope (MIT) — `npm install @murmurv2/core` (and the rest). See [Install](#install).
+- **WebSocket transport adapter.** `@murmurv2/broker-ws` — relay + broker client with envelope delivery, ACK correlation, dedupe, and invalid-envelope NACKs (browser/edge deployment pending).
+- **Roster-backed auth tokens.** Signed audience/scope/time-windowed tokens verified against the federation roster (no embedded trust root) — `@murmurv2/federation`.
+- **Machine-readable protocol schema + conformance suite.** Draft 2020-12 JSON Schema for `EnvelopeV1`/`AckV1` (`@murmurv2/core/schema`) + a compatibility matrix; conformance tests keep the schema and the runtime guard in lock-step.
 - **Durable JetStream transport (opt-in).** Turn on at-least-once durability with NATS JetStream — finite redelivery (`max_deliver`), explicit ACK, dead-letter on exhaustion — while keeping the SQLite outbox as the transactional source of truth. Default-OFF; set `MURMUR_JETSTREAM=1` to enable.
 - **Federation (live-proven in isolation; no real partner yet).** `org/agentId` addressing, an Ed25519-signed key directory, a `fed.*` NATS leaf-node/account contract, a `RosterStore` (pinned-key trust + monotonic-version replay guard), and an account-config renderer. Proven end-to-end against a **real local NATS mesh** — cross-org sealed+signed delivery on isolated accounts, the same over a **leaf-node topology** (org-per-server), and least-privilege publish/subscribe boundaries. Still **not wired to a second real partner org** (the only remaining gate).
 - **A2A bridge (live client round-trip; mock internal counterpart).** A bridge against the industry-standard [A2A protocol](https://a2aproject.github.io/A2A/). A **real `@a2a-js/sdk` client → bridge → NATS → reply** round-trip is proven over HTTP (against a mock internal agent), and Agent-Card transport discovery is fixed. Still **not connected to a real remote A2A agent**.
 - **Native wake.** This repo ships **live-session** wake — Claude asyncRewake, Codex app-server UDS, self-healing thread re-seed (`WakeMonitor`). **Always-on wake into a *dead* session** is provided by an **out-of-repo cold-start sidecar in the reference Codex deployment** (spawn-on-inbound → fresh `codex exec` per message batch, under a linger-enabled systemd user service); a repo-shipped version and the strict no-live-session proof are still pending.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full list.
+
+## Install
+
+All packages are published on npm under the [`@murmurv2`](https://www.npmjs.com/org/murmurv2) scope (MIT):
+
+```bash
+# core types + SQLite stores, crypto, MCP server
+npm install @murmurv2/core @murmurv2/security @murmurv2/mcp-server
+
+# transports
+npm install @murmurv2/broker-nats   # NATS core + optional JetStream durability
+npm install @murmurv2/broker-ws     # WebSocket relay/client
+
+# federation + bridges
+npm install @murmurv2/federation @murmurv2/federation-nats
+npm install @murmurv2/bridge-a2a @murmurv2/bridge-telegram
+```
+
+Prefer to run the full mesh from source? See [Quick Start](#quick-start).
 
 ## The Problem
 
@@ -439,8 +464,8 @@ See [protocol-v1.md](docs/protocol-v1.md) for the full specification.
 - [ ] **Auth/authz token model** — roster-backed signed tokens with audience/scope/time verification are coded and unit-tested; remaining gate: wire token enforcement into live transports/bridges
 - [ ] **WebSocket transport adapter** — relay + broker client are coded and unit-tested for envelope delivery, ACK correlation, dedupe, and invalid-envelope NACKs; remaining gate: browser/edge deployment examples and hardening
 - [x] Prometheus metrics exporter — outbox depth, delivery latency, error rates
-- [ ] npm package publishing — `@murmurv2/*` on npm registry
-- [ ] NATS native request-reply — replace polling with ephemeral inbox subjects
+- [x] **npm package publishing** — all `@murmurv2/*` packages published public on npm @ `0.1.0` (MIT); `@murmurv2/broker-ws` ships in the next release
+- [ ] NATS native request-reply — replace polling with ephemeral inbox subjects (design locked: read-only ephemeral subscription accelerates the wait, SQLite outbox stays source of truth)
 
 ### Planned (next wave)
 - [ ] Message streaming — large payload chunking with backpressure

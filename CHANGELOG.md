@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-06-22
+
+### Added
+
+- **Published on npm.** All `@murmurv2/*` packages are public on the npm registry @ `0.1.0` (MIT), under the `murmurv2` org. Publish tooling: `scripts/prep-publish.mjs` (private→public, license, `publishConfig`, intra-workspace `file:`→`^0.1.0`, per-package `prepack` build guard, `files: dist/src + LICENSE`) and `scripts/publish-all.mjs` (root build → topological order → per-tarball assertion that `dist/src/index.{js,d.ts}` exist → publish). `@murmurv2/broker-ws` ships in the next release.
+- **WebSocket transport adapter** — `@murmurv2/broker-ws`: relay server + broker client with envelope delivery, ACK correlation, dedupe, and invalid-envelope NACKs, reusing the core primitives. Browser/edge deployment examples pending.
+- **Roster-backed auth tokens** — `@murmurv2/federation`: `signAuthToken`/`verifyAuthToken` issue Ed25519-signed tokens with audience, scopes, and `nbf`/`exp` windows; the issuer verify key is resolved from the verified roster (no embedded trust root).
+- **`RosterStore`** — `@murmurv2/federation`: pinned-key trust + monotonic-version replay guard (rejects stale/downgraded rosters) + trust-epoch reset on key rotation.
+- **Machine-readable protocol schema + conformance** — `@murmurv2/core/schema/protocol-v1.schema.json` (Draft 2020-12; root validates `EnvelopeV1`, `#/$defs/AckV1` for acks) + `docs/protocol-compatibility.md` matrix; the conformance suite asserts the schema and `isEnvelopeV1` agree on every accept/reject.
+- **Federation live interop (in isolation)** — cross-org sealed+signed delivery proven over real NATS accounts and a leaf-node topology with least-privilege publish/subscribe boundaries (`packages/federation-nats/integration/`); a NATS accounts-config renderer generates each org's account contract.
+- **ACP autonomy loop** — idempotent Murmur→ACP task producer + a gated send-boundary worker client.
+
+### Changed
+
+- README, file tree, and Roadmap synced to the real state, with honest scoping for in-isolation / mock-counterpart features.
+
 ## [2.1.0] - 2026-06-21
 
 ### Added
