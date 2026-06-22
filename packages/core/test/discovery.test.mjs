@@ -5,6 +5,8 @@ import {
   isPresenceFrameV1,
   isSignedPresenceFrameV1,
   observeSignedPresence,
+  promoteCandidate,
+  queryCandidates,
   stablePresencePayload,
 } from "../dist/src/index.js";
 
@@ -198,4 +200,50 @@ test("an out-of-order (older) frame does not overwrite a fresher candidate", () 
   );
   assert.equal(stale.lastSeen, at("2026-06-22T13:00:40.000Z")); // kept fresher
   assert.equal(reg.get("agent-x", at("2026-06-22T13:00:42.000Z")).subject, "msg.agent-x");
+});
+
+// --- roster query + operator promotion (PR3) ---------------------------------
+
+test("queryCandidates filters by capability and subject", () => {
+  const reg = new CandidateRegistry();
+  const now = at("2026-06-22T13:00:10.000Z");
+  reg.observe(frame({ nonce: "1" }), now); // agent-x: chat, files
+  reg.observe(frame({ agentId: "agent-y", nonce: "2", subject: "msg.agent-y", capabilities: ["audio"] }), now);
+  assert.equal(queryCandidates(reg, {}, now).length, 2);
+  assert.deepEqual(queryCandidates(reg, { capability: "files" }, now).map((c) => c.agentId), ["agent-x"]);
+  assert.deepEqual(queryCandidates(reg, { capability: "audio" }, now).map((c) => c.agentId), ["agent-y"]);
+  assert.deepEqual(queryCandidates(reg, { subject: "msg.agent-y" }, now).map((c) => c.agentId), ["agent-y"]);
+  assert.equal(queryCandidates(reg, { capability: "nope" }, now).length, 0);
+});
+
+test("queryCandidates excludes expired candidates", () => {
+  const reg = new CandidateRegistry();
+  reg.observe(frame(), at("2026-06-22T13:00:05.000Z")); // ttl 60s
+  assert.equal(queryCandidates(reg, {}, at("2026-06-22T13:02:00.000Z")).length, 0);
+});
+
+test("promoteCandidate yields a trusted-peer entry from a live candidate", () => {
+  const reg = new CandidateRegistry();
+  const now = at("2026-06-22T13:00:10.000Z");
+  reg.observe(frame(), now);
+  const promoted = promoteCandidate(reg, "agent-x", now);
+  assert.ok(promoted);
+  assert.equal(promoted.agentId, "agent-x");
+  assert.equal(promoted.promotedAt, now);
+  // peer is the literal nested value the live config expects at peers[agentId]
+  // (matches murmur-join / murmur-add-peer / mcp-server send paths)
+  assert.deepEqual(promoted.peer, {
+    encryption: { publicKey: "enc-pub" },
+    signing: { publicKey: "sig-pub" },
+    subject: "msg.agent-x",
+  });
+});
+
+test("promoteCandidate returns null for unknown or expired candidates and never mutates trust", () => {
+  const reg = new CandidateRegistry();
+  reg.observe(frame(), at("2026-06-22T13:00:05.000Z"));
+  assert.equal(promoteCandidate(reg, "ghost", at("2026-06-22T13:00:10.000Z")), null);
+  assert.equal(promoteCandidate(reg, "agent-x", at("2026-06-22T13:02:00.000Z")), null); // expired
+  // promotion does not flip the registry's candidate to trusted
+  assert.equal(reg.get("agent-x", at("2026-06-22T13:00:10.000Z")).trusted, false);
 });

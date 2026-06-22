@@ -232,3 +232,86 @@ export const observeSignedPresence = async (
   if (!ok) return null;
   return registry.observe(signed.frame, now);
 };
+
+/** Filter for a roster query over discovered candidates. */
+export interface CandidateQuery {
+  /** Only candidates advertising this capability. */
+  capability?: string;
+  /** Only candidates whose subject exactly matches. */
+  subject?: string;
+}
+
+/**
+ * Roster query: the non-expired candidates at `now` matching the filter. Read-only
+ * — candidates remain untrusted; this is just discovery introspection (the surface
+ * an operator/UI uses to decide who to promote).
+ */
+export const queryCandidates = (
+  registry: CandidateRegistry,
+  query: CandidateQuery,
+  now: number,
+): DiscoveryCandidate[] =>
+  registry.list(now).filter(
+    (c) =>
+      (query.capability === undefined || c.capabilities.includes(query.capability)) &&
+      (query.subject === undefined || c.subject === query.subject),
+  );
+
+/**
+ * The exact value to set at `agent-config.peers[agentId]`. Mirrors the nested
+ * key shape that every live writer/reader uses — `murmur-join`, `murmur-add-peer`,
+ * and the daemon / mcp-server send paths (`peer.encryption.publicKey`,
+ * `peer.signing.publicKey`). Keep this aligned with those if the config evolves.
+ */
+export interface PeerConfigEntry {
+  encryption: { publicKey: string };
+  signing: { publicKey: string };
+  subject: string;
+}
+
+/**
+ * Result of promoting a discovered candidate: the trusted-peer config entry plus
+ * promotion metadata. The `peer` field is the literal value to wire into the live
+ * config — `config.peers[result.agentId] = result.peer` — so it must match the
+ * nested-key {@link PeerConfigEntry} shape the daemon/mcp-server read, NOT the flat
+ * candidate shape. `agentId` / `promotedAt` are metadata that live OUTSIDE the
+ * config value (they are the map key and an audit timestamp, not peer fields).
+ */
+export interface PromotedPeer {
+  agentId: string;
+  /** Insert verbatim at `agent-config.peers[agentId]`. */
+  peer: PeerConfigEntry;
+  /** Epoch ms the operator promoted this candidate. */
+  promotedAt: number;
+}
+
+/**
+ * Promote a discovered candidate into a trusted-peer entry. This is the EXPLICIT
+ * operator step the whole discovery design defers trust to: the caller (an
+ * operator action or an approved policy) decides to promote, and this returns the
+ * peer entry to add to the trusted peer set. It does NOT add the peer itself and
+ * does NOT mutate the registry — wiring the entry into the live peer config /
+ * daemon remains the caller's deliberate action:
+ *
+ *   const promoted = promoteCandidate(registry, agentId, Date.now());
+ *   if (promoted) config.peers[promoted.agentId] = promoted.peer;
+ *
+ * Returns null if there is no live (non-expired) candidate for `agentId`.
+ */
+export const promoteCandidate = (
+  registry: CandidateRegistry,
+  agentId: string,
+  now: number,
+): PromotedPeer | null => {
+  const c = registry.get(agentId, now);
+  if (!c) return null;
+  return {
+    agentId: c.agentId,
+    peer: {
+      encryption: { publicKey: c.encryptionPublicKey },
+      signing: { publicKey: c.signingPublicKey },
+      subject: c.subject,
+    },
+    promotedAt: now,
+  };
+};
