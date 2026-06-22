@@ -3,6 +3,9 @@ import { mkdirSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+// Agent discovery (presence frames + candidate registry)
+export * from "./discovery.js";
+
 export type DeliveryMode = "at-least-once";
 
 export interface EnvelopeV1 {
