@@ -301,7 +301,7 @@ export class WebSocketBroker {
       return;
     }
 
-    const envelope = raw;
+    const envelope = raw as EnvelopeV1;
     const ackSubject = `ack.${envelope.senderAgentId}`;
     const isDup = await params.dedupe.seen(envelope.msgId, params.consumerId);
     if (isDup) {
