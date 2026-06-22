@@ -459,3 +459,60 @@ export async function verifyAuthToken(
 
   return { accepted: true };
 }
+
+/** Reject reasons for ingress authorization — the token reasons plus a missing token. */
+export type AuthorizeInboundReason = AuthTokenRejectReason | "auth-missing";
+
+export interface AuthorizeInboundOptions {
+  /** Local org used to resolve a bare wire `senderAgentId` into a full AgentAddress. */
+  localOrg: string;
+  /** This receiver's address — the token's `audience` must equal it. */
+  audience: AgentAddress;
+  /** Scopes the inbound action requires (e.g. `["murmur:send"]`). */
+  requiredScopes: string[];
+  /** The `MURMUR_ENFORCE_AUTH` gate. When false, an envelope with no `authToken` is
+   *  accepted (auth optional); when true, a missing token is rejected. */
+  enforce: boolean;
+  now?: Date | string | number;
+}
+
+export interface AuthorizeInboundResult {
+  accepted: boolean;
+  reason?: AuthorizeInboundReason;
+}
+
+/**
+ * Ingress authorization for an inbound envelope. Decodes the envelope's bearer
+ * `authToken` and verifies it against the roster, binding the token's `subject`
+ * (actor) to the envelope's `senderAgentId` — so an authority's grant can only be
+ * used by the agent it was issued for. The wire `senderAgentId` is a BARE id, while
+ * `subject` is canonical `org/agentId`, so it is parsed into an AgentAddress first
+ * (comparing the raw strings would always mismatch).
+ *
+ * `enforce=false` lets un-authenticated envelopes (no `authToken`) through; `true`
+ * rejects them. Callers MUST NOT log the token body — audit
+ * msgId/sender/audience/reason only.
+ */
+export async function authorizeInbound(
+  envelope: { senderAgentId: string; authToken?: string },
+  rosters: RosterStore,
+  options: AuthorizeInboundOptions,
+): Promise<AuthorizeInboundResult> {
+  if (envelope.authToken === undefined) {
+    return options.enforce ? { accepted: false, reason: "auth-missing" } : { accepted: true };
+  }
+  let token: SignedAuthToken;
+  let requiredSubject: AgentAddress;
+  try {
+    token = decodeAuthToken(envelope.authToken);
+    requiredSubject = parseAddress(envelope.senderAgentId, options.localOrg);
+  } catch {
+    return { accepted: false, reason: "malformed" };
+  }
+  return verifyAuthToken(token, rosters, {
+    now: options.now,
+    audience: options.audience,
+    requiredScopes: options.requiredScopes,
+    requiredSubject,
+  });
+}

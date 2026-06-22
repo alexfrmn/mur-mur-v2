@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createKeyPair, createSigningKeyPair, signEnvelope } from "../../security/dist/src/index.js";
 import {
+  authorizeInbound,
   canonicalAuthTokenClaims,
   canonicalRoster,
   decodeAuthToken,
@@ -395,5 +396,81 @@ test("AuthToken: rejects malformed token timestamps and empty scopes before sign
   await assert.rejects(
     () => signAuthToken(authClaims({ expiresAt: "not-a-date" }), issuerSig.privateKey),
     /invalid expiresAt/,
+  );
+});
+
+// --- authorizeInbound (ingress authz; PR-D) -----------------------------------
+
+const AUD = { org: "partner", agentId: "agent-codex" }; // = authClaims() audience
+const encodedToken = (issuerSig, overrides) =>
+  signAuthToken(authClaims(overrides), issuerSig.privateKey).then(encodeAuthToken);
+
+test("authorizeInbound: enforce off lets un-authenticated envelopes through", async () => {
+  const { store } = await authStoreWithIssuer();
+  assert.deepEqual(
+    await authorizeInbound({ senderAgentId: "agent-worker" }, store, {
+      localOrg: "aimindset", audience: AUD, requiredScopes: ["murmur:send"], enforce: false,
+    }),
+    { accepted: true },
+  );
+});
+
+test("authorizeInbound: enforce on rejects a missing token", async () => {
+  const { store } = await authStoreWithIssuer();
+  assert.deepEqual(
+    await authorizeInbound({ senderAgentId: "agent-worker" }, store, {
+      localOrg: "aimindset", audience: AUD, requiredScopes: ["murmur:send"], enforce: true,
+    }),
+    { accepted: false, reason: "auth-missing" },
+  );
+});
+
+test("authorizeInbound: accepts a valid token bound to the sender", async () => {
+  const { store, issuerSig } = await authStoreWithIssuer();
+  const authToken = await encodedToken(issuerSig);
+  assert.deepEqual(
+    await authorizeInbound({ senderAgentId: "agent-worker", authToken }, store, {
+      localOrg: "aimindset", audience: AUD, requiredScopes: ["murmur:send"],
+      enforce: true, now: "2026-06-21T10:30:00.000Z",
+    }),
+    { accepted: true },
+  );
+});
+
+test("authorizeInbound: binds subject to senderAgentId (bare id parsed to AgentAddress)", async () => {
+  const { store, issuerSig } = await authStoreWithIssuer();
+  const authToken = await encodedToken(issuerSig); // subject = aimindset/agent-worker
+  // a sender other than the token's subject is rejected — the grant is bound to the actor
+  assert.deepEqual(
+    await authorizeInbound({ senderAgentId: "agent-evil", authToken }, store, {
+      localOrg: "aimindset", audience: AUD, requiredScopes: ["murmur:send"],
+      enforce: true, now: "2026-06-21T10:30:00.000Z",
+    }),
+    { accepted: false, reason: "subject-mismatch" },
+  );
+});
+
+test("authorizeInbound: rejects missing scope, audience mismatch, and a malformed token", async () => {
+  const { store, issuerSig } = await authStoreWithIssuer();
+  const authToken = await encodedToken(issuerSig);
+  assert.deepEqual(
+    await authorizeInbound({ senderAgentId: "agent-worker", authToken }, store, {
+      localOrg: "aimindset", audience: AUD, requiredScopes: ["murmur:admin"],
+      enforce: true, now: "2026-06-21T10:30:00.000Z",
+    }),
+    { accepted: false, reason: "scope-missing" },
+  );
+  assert.deepEqual(
+    await authorizeInbound({ senderAgentId: "agent-worker", authToken }, store, {
+      localOrg: "aimindset", audience: { org: "other", agentId: "x" },
+      requiredScopes: ["murmur:send"], enforce: true, now: "2026-06-21T10:30:00.000Z",
+    }),
+    { accepted: false, reason: "audience-mismatch" },
+  );
+  assert.deepEqual(
+    await authorizeInbound({ senderAgentId: "agent-worker", authToken: "MURMUR-AUTH:garbage!!" }, store, {
+      localOrg: "aimindset", audience: AUD, requiredScopes: ["murmur:send"], enforce: true,
+    }),
+    { accepted: false, reason: "malformed" },
   );
 });
