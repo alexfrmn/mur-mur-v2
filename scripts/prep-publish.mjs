@@ -19,6 +19,7 @@ const DESCRIPTIONS = {
   "@murmurv2/core": "Murmur V2 core — EnvelopeV1/AckV1 wire types, SQLite outbox + dedupe stores, machine-readable protocol schema.",
   "@murmurv2/security": "Murmur V2 crypto — X25519 + XChaCha20-Poly1305 + Ed25519 envelope encrypt/sign/verify (MLS scaffold).",
   "@murmurv2/broker-nats": "Murmur V2 NATS broker — core pub/sub with optional JetStream durability (finite redelivery + DLQ).",
+  "@murmurv2/broker-ws": "Murmur V2 WebSocket broker adapter — local relay and browser/edge-friendly transport semantics.",
   "@murmurv2/mcp-server": "Murmur V2 MCP server — 7 tools for agent-to-agent messaging over the Model Context Protocol.",
   "@murmurv2/federation": "Murmur V2 federation — org/agent addressing, Ed25519 signed roster + RosterStore, roster-backed auth tokens.",
   "@murmurv2/federation-nats": "Murmur V2 federation NATS contract — fed.* subjects + account-config renderer for cross-org leaf-node meshes.",

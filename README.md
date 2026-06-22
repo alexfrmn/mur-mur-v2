@@ -225,6 +225,7 @@ This enables **fully autonomous overnight work** — launch 2-3 agents, they col
 ### Operations
 - **SQLite WAL** — concurrent reads, write-ahead logging, optimistic locking
 - **Core NATS + SQLite outbox** — low-latency pub/sub with app-level at-least-once delivery, ACK correlation, DLQ, and unbounded dedupe
+- **WebSocket Transport Adapter** — local relay + broker client with envelope delivery, ACK correlation, dedupe, and invalid-envelope NACKs (browser deployment pending)
 - **Systemd Ready** — production service file included
 - **Docker Compose** — one-command NATS setup
 - **Observability Dashboard** — real-time message flow visualization
@@ -301,6 +302,7 @@ mur-mur-v2/
 ├── packages/
 │   ├── core/              # Envelope schema, SQLite stores, policy validation
 │   ├── broker-nats/       # core NATS pub/sub, outbox flush, ACK correlation
+│   ├── broker-ws/         # WebSocket relay/client transport adapter
 │   ├── security/          # NaCl crypto (X25519, XChaCha20, Ed25519), MLS scaffold
 │   ├── mcp-server/        # JSON-RPC MCP stdio server (7 tools)
 │   ├── bridge-telegram/   # Telegram bot adapter
@@ -435,12 +437,12 @@ See [protocol-v1.md](docs/protocol-v1.md) for the full specification.
 - [ ] **A2A interop bridge (v2.1)** — a **real `@a2a-js/sdk` client → bridge → NATS → reply round-trip is proven** over HTTP (against a mock internal agent), and Agent-Card transport discovery is fixed. Remaining gate: **not yet connected to a real remote A2A agent**
 - [ ] **Always-on wake (dead session) (v2.1)** — a cold-start spawn-on-inbound sidecar (fresh `codex exec` per batch, exactly-once, linger-enabled systemd user service) exists in the **reference Codex deployment, outside this repo**; a repo-shipped version and the strict no-live-session proof remain pending
 - [ ] **Auth/authz token model** — roster-backed signed tokens with audience/scope/time verification are coded and unit-tested; remaining gate: wire token enforcement into live transports/bridges
+- [ ] **WebSocket transport adapter** — relay + broker client are coded and unit-tested for envelope delivery, ACK correlation, dedupe, and invalid-envelope NACKs; remaining gate: browser/edge deployment examples and hardening
 - [x] Prometheus metrics exporter — outbox depth, delivery latency, error rates
 - [ ] npm package publishing — `@murmurv2/*` on npm registry
 - [ ] NATS native request-reply — replace polling with ephemeral inbox subjects
 
 ### Planned (next wave)
-- [ ] WebSocket transport adapter — browser-based agents
 - [ ] Message streaming — large payload chunking with backpressure
 - [ ] Agent discovery protocol — find peers without manual invite exchange
 - [ ] Reference deployment examples — docker-compose, Kubernetes manifests
