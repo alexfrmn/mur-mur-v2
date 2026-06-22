@@ -649,7 +649,7 @@ export const isStreamChunk = (v: unknown): v is StreamChunk => {
     typeof o.streamId === "string" && o.streamId.length > 0 &&
     isFiniteNumber(o.chunkIndex) &&
     isFiniteNumber(o.chunkCount) &&
-    typeof o.data === "string" &&
+    typeof o.data === "string" && o.data.length > 0 &&
     (o.sha256 === undefined || typeof o.sha256 === "string") &&
     typeof o.isLast === "boolean"
   );

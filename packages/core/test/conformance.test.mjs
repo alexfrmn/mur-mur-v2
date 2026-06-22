@@ -5,9 +5,11 @@
 // the contract. Covered wire types: EnvelopeV1, AckV1, PresenceFrameV1, SignedPresenceFrameV1,
 // StreamStart/StreamChunk/StreamEnd (+ the discriminated StreamFrame union). No external validator
 // dep: a tiny subset validator interprets the flat protocol $defs
-// (type incl. boolean / required / const / enum / minLength / minItems / items / oneOf).
-// Runtime-only checks NOT expressible in the subset validator — numeric finiteness, ttlMs>0,
-// date-time validity — live in the guards and are intentionally outside the agreement matrices.
+// (type incl. boolean / required / const / enum / minLength / minItems / items / exclusiveMinimum / oneOf).
+// The only runtime-only check is `format: date-time` validity, which Draft 2020-12 treats as an
+// advisory annotation (not an assertion); the guards enforce it via Date.parse and it sits outside
+// the agreement matrices (documented per-type). Everything else — including ttlMs > 0 and non-empty
+// stream-chunk data — is enforced by BOTH the schema and the guards and lives in the matrices.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -61,6 +63,7 @@ function validate(def, value, p = "$") {
       break;
     case "number":
       if (typeof value !== "number") errs.push(`${p}: number`);
+      else if (def.exclusiveMinimum != null && value <= def.exclusiveMinimum) errs.push(`${p}: exclusiveMinimum`);
       break;
     case "boolean":
       if (typeof value !== "boolean") errs.push(`${p}: boolean`);
@@ -197,6 +200,8 @@ test("schema and isPresenceFrameV1 agree on every structural violation", () => {
     ["capabilities non-string item", { ...GOOD_PRESENCE, capabilities: [1] }],
     ["missing ttlMs", omit(GOOD_PRESENCE, "ttlMs")],
     ["ttlMs not number", { ...GOOD_PRESENCE, ttlMs: "60000" }],
+    ["ttlMs zero (exclusiveMinimum)", { ...GOOD_PRESENCE, ttlMs: 0 }],
+    ["ttlMs negative", { ...GOOD_PRESENCE, ttlMs: -1 }],
     ["missing ts", omit(GOOD_PRESENCE, "ts")],
     ["missing nonce", omit(GOOD_PRESENCE, "nonce")],
     ["empty nonce", { ...GOOD_PRESENCE, nonce: "" }],
@@ -207,17 +212,14 @@ test("schema and isPresenceFrameV1 agree on every structural violation", () => {
   }
 });
 
-test("PresenceFrameV1 runtime-only checks are stricter than the structural schema (documented boundary)", () => {
-  // ttlMs <= 0, non-finite ttlMs, and an invalid `ts` are advisory in the schema
-  // (the subset validator only checks JS type) but REJECTED by the runtime guard.
-  for (const e of [
-    { ...GOOD_PRESENCE, ttlMs: 0 },
-    { ...GOOD_PRESENCE, ttlMs: -1 },
-    { ...GOOD_PRESENCE, ts: "not-a-date" },
-  ]) {
-    assert.equal(presenceOk(e), true, "subset schema accepts (type-only)");
-    assert.equal(isPresenceFrameV1(e), false, "runtime guard is stricter");
-  }
+test("PresenceFrameV1: date-time validity is a runtime-only check (format is advisory in JSON Schema)", () => {
+  // `ts` carries `format: date-time`, which Draft 2020-12 treats as an annotation, NOT an
+  // assertion — a spec-compliant validator does not reject a malformed date. The runtime guard
+  // (Date.parse) is stricter. (ttlMs > 0 IS enforced by the schema via exclusiveMinimum, so it
+  // lives in the agreement matrix above, not here.)
+  const e = { ...GOOD_PRESENCE, ts: "not-a-date" };
+  assert.equal(presenceOk(e), true, "subset schema accepts (format is advisory)");
+  assert.equal(isPresenceFrameV1(e), false, "runtime guard rejects via Date.parse");
 });
 
 // ---------------------------------------------------------------------------
@@ -273,10 +275,6 @@ test("StreamStart: schema and isStreamStart agree", () => {
 test("StreamChunk: schema and isStreamChunk agree (incl. boolean isLast)", () => {
   assert.equal(streamChunkOk(GOOD_CHUNK), true);
   assert.equal(isStreamChunk(GOOD_CHUNK), true);
-  // a zero-byte (empty data) chunk is valid for both
-  const empty = { ...GOOD_CHUNK, data: "", isLast: true };
-  assert.equal(streamChunkOk(empty), true);
-  assert.equal(isStreamChunk(empty), true);
   const bad = [
     ["wrong kind", { ...GOOD_CHUNK, kind: "stream.end" }],
     ["missing streamId", omit(GOOD_CHUNK, "streamId")],
@@ -286,6 +284,10 @@ test("StreamChunk: schema and isStreamChunk agree (incl. boolean isLast)", () =>
     ["missing chunkCount", omit(GOOD_CHUNK, "chunkCount")],
     ["missing data", omit(GOOD_CHUNK, "data")],
     ["data not string", { ...GOOD_CHUNK, data: 5 }],
+    // zero-byte data: the runtime (createStreamChunk + both reassemblers) throws
+    // stream-chunk-data-required, so the contract rejects it — schema (minLength 1)
+    // and guard (data.length > 0) agree.
+    ["empty data", { ...GOOD_CHUNK, data: "" }],
     ["missing isLast", omit(GOOD_CHUNK, "isLast")],
     ["isLast not boolean", { ...GOOD_CHUNK, isLast: "false" }],
   ];

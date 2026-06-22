@@ -98,7 +98,7 @@
       }
     },
     "StreamChunk": {
-      "description": "One payload chunk of a stream. data may be empty (a zero-byte chunk); sha256 is an optional per-chunk integrity tag.",
+      "description": "One payload chunk of a stream. data MUST be non-empty — the runtime (createStreamChunk + both reassemblers) rejects zero-byte chunks with stream-chunk-data-required. sha256 is an optional per-chunk integrity tag.",
       "type": "object",
       "required": ["kind", "streamId", "chunkIndex", "chunkCount", "data", "isLast"],
       "properties": {
@@ -106,7 +106,7 @@
         "streamId": { "type": "string", "minLength": 1 },
         "chunkIndex": { "type": "number" },
         "chunkCount": { "type": "number" },
-        "data": { "type": "string" },
+        "data": { "type": "string", "minLength": 1 },
         "sha256": { "type": "string" },
         "isLast": { "type": "boolean" }
       }
