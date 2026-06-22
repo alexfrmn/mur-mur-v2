@@ -10,8 +10,10 @@
  * it must stay a deliberate operator step, not a side effect of an inbound frame.)
  *
  * A presence frame carries only PUBLIC metadata (public keys, subject,
- * capabilities). It is self-signed for announcement integrity — that proves the
- * frame was not tampered with in flight, NOT that the agentId is who it claims.
+ * capabilities). PR1 treats the frame as UNSIGNED data — there is no signature
+ * field or verification here; frame signing + verification over NATS lands in
+ * PR2. Even once signed, a valid signature would only prove announcement
+ * integrity (not tampered in flight), NOT that the agentId is who it claims.
  * Identity authenticity is established out-of-band at promotion time.
  */
 
@@ -67,8 +69,12 @@ export interface DiscoveryCandidate {
  */
 export class CandidateRegistry {
   private readonly candidates = new Map<string, DiscoveryCandidate>();
-  /** Remembers (agentId, nonce) of recently-applied frames for idempotency. */
-  private readonly seenNonces = new Set<string>();
+  /**
+   * Remembers (agentId, nonce) → expiry (epoch ms) of applied frames for
+   * idempotency. Bounded: entries expire with their frame and are dropped by
+   * `prune()`, so a long-running listener does not leak memory on every announce.
+   */
+  private readonly seenNonces = new Map<string, number>();
 
   /**
    * Observe a presence frame. Returns the candidate (created or refreshed), or null
@@ -87,7 +93,7 @@ export class CandidateRegistry {
       // Duplicate announcement → idempotent: return current candidate unchanged.
       return this.candidates.get(frame.agentId) ?? null;
     }
-    this.seenNonces.add(dedupeKey);
+    this.seenNonces.set(dedupeKey, expiresAt);
 
     const existing = this.candidates.get(frame.agentId);
     // Out-of-order/stale frame for a known agent → keep the fresher one.
@@ -119,7 +125,7 @@ export class CandidateRegistry {
     return [...this.candidates.values()].filter((c) => c.expiresAt > now);
   }
 
-  /** Drop expired candidates (and their dedupe markers). Returns count removed. */
+  /** Drop expired candidates AND expired dedupe markers. Returns candidates removed. */
   prune(now: number): number {
     let removed = 0;
     for (const [agentId, c] of this.candidates) {
@@ -128,7 +134,16 @@ export class CandidateRegistry {
         removed += 1;
       }
     }
+    // Bound the dedupe set: expired nonce markers cannot match a fresh frame.
+    for (const [key, expiresAt] of this.seenNonces) {
+      if (expiresAt <= now) this.seenNonces.delete(key);
+    }
     return removed;
+  }
+
+  /** Count of remembered dedupe markers (test/observability hook). */
+  nonceCount(): number {
+    return this.seenNonces.size;
   }
 
   /** Count of non-expired candidates at `now`. */

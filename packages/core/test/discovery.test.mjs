@@ -92,6 +92,15 @@ test("prune removes expired candidates", () => {
 
 // --- idempotency / ordering --------------------------------------------------
 
+test("prune drops expired dedupe markers too (bounded seenNonces)", () => {
+  const reg = new CandidateRegistry();
+  reg.observe(frame({ nonce: "a" }), at("2026-06-22T13:00:05.000Z")); // ttl 60s
+  reg.observe(frame({ agentId: "agent-y", nonce: "b", ttlMs: 600_000 }), at("2026-06-22T13:00:05.000Z"));
+  assert.equal(reg.nonceCount(), 2);
+  reg.prune(at("2026-06-22T13:02:00.000Z")); // agent-x's 60s frame expired, agent-y's 600s not
+  assert.equal(reg.nonceCount(), 1); // only the non-expired nonce marker remains
+});
+
 test("duplicate (agentId, nonce) announcement is idempotent", () => {
   const reg = new CandidateRegistry();
   const now = at("2026-06-22T13:00:10.000Z");
