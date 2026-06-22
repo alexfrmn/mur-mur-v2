@@ -49,6 +49,16 @@ export interface BrokerConfig {
 export type MessageHandler = (envelope: EnvelopeV1) => Promise<void>;
 export type BrokerSubscription = Subscription | { unsubscribe(): void | Promise<void> };
 
+/**
+ * Optional ingress authorizer. Returns whether an inbound envelope is allowed before
+ * it reaches the consumer's `onMessage`. INJECTED (not imported) so broker-nats stays
+ * free of a @murmurv2/federation dependency — the daemon wires `authorizeInbound` here
+ * only when `MURMUR_ENFORCE_AUTH` is on (default OFF → no authorize hook → no
+ * enforcement). A rejected envelope is NACKed `auth-rejected:<reason>` and never
+ * delivered. The hook MUST NOT log the token body.
+ */
+export type InboundAuthorizer = (envelope: EnvelopeV1) => Promise<{ accepted: boolean; reason?: string }>;
+
 export interface BrokerStatusEvent {
   type: string;
   data?: unknown;
@@ -248,6 +258,7 @@ export class NatsBroker {
       dedupe: DedupeStore;
       onMessage: MessageHandler;
       maxPoisonAttempts?: number;
+      authorize?: InboundAuthorizer;
     },
   ): Promise<"ack" | "retry"> {
     let msgId = "unknown";
@@ -265,6 +276,20 @@ export class NatsBroker {
       if (isDup) {
         await this.publishAck(ackSubject, createAck(decoded.msgId, params.consumerId, "ack", "duplicate-ignored"));
         return "ack";
+      }
+
+      // Ingress authorization (PR-D2). Only enforced when an authorizer is wired
+      // (daemon does so when MURMUR_ENFORCE_AUTH is on). A rejected envelope is
+      // terminal: NACK auth-rejected:<reason>, never delivered, not retried.
+      if (params.authorize) {
+        const authz = await params.authorize(decoded);
+        if (!authz.accepted) {
+          await this.publishAck(
+            ackSubject,
+            createAck(decoded.msgId, params.consumerId, "nack", `auth-rejected:${authz.reason ?? "denied"}`),
+          );
+          return "ack";
+        }
       }
 
       await params.onMessage(decoded);
@@ -362,6 +387,9 @@ export class NatsBroker {
     dedupe: DedupeStore;
     onMessage: MessageHandler;
     maxPoisonAttempts?: number;
+    /** Optional ingress authorizer; when set, envelopes are authorized before delivery
+     *  (wire @murmurv2/federation authorizeInbound here behind MURMUR_ENFORCE_AUTH). */
+    authorize?: InboundAuthorizer;
   }): Promise<BrokerSubscription> {
     await this.connect();
 
