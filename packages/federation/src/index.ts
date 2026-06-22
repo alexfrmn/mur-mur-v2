@@ -238,8 +238,14 @@ export class RosterStore {
 // ──────────────────── Auth token (roster-backed authn/authz) ────────────────────
 
 export interface AuthTokenClaims {
-  /** Agent that signs the token; its Ed25519 verify key MUST come from RosterStore. */
+  /** Agent that signs the token; its Ed25519 verify key MUST come from RosterStore.
+   *  For real authz this is an org-authority, NOT the caller (self-issued scope is
+   *  meaningless). */
   issuer: AgentAddress;
+  /** The authorized caller this token vouches for — the actor a verifier binds to the
+   *  message sender (`subject === envelope.senderAgentId`). Without this an authority
+   *  token granting `murmur:send` would not be bound to WHICH agent may send. */
+  subject: AgentAddress;
   /** Intended recipient/service of the token. */
   audience: AgentAddress;
   /** Permission strings such as `murmur:send` or `murmur:reply`. */
@@ -264,11 +270,15 @@ export type AuthTokenRejectReason =
   | "not-yet-valid"
   | "expired"
   | "audience-mismatch"
+  | "subject-mismatch"
   | "scope-missing";
 
 export interface AuthTokenVerifyOptions {
   now?: Date | string | number;
   audience?: AgentAddress;
+  /** Require the token's `subject` (actor) to equal this address — the caller binds it
+   *  to the message sender, e.g. `requiredSubject = envelope.senderAgentId`. */
+  requiredSubject?: AgentAddress;
   requiredScopes?: string[];
 }
 
@@ -315,6 +325,7 @@ function normalizeAuthClaims(claims: AuthTokenClaims): AuthTokenClaims {
   }
   return {
     issuer: parseAddress(formatAddress(claims.issuer), claims.issuer.org),
+    subject: parseAddress(formatAddress(claims.subject), claims.subject.org),
     audience: parseAddress(formatAddress(claims.audience), claims.audience.org),
     scopes: normalizeScopes(claims.scopes),
     issuedAt: claims.issuedAt,
@@ -325,12 +336,15 @@ function normalizeAuthClaims(claims: AuthTokenClaims): AuthTokenClaims {
 
 /**
  * Canonical auth-token signing input. Scopes are sorted/deduped so permission order
- * does not affect signatures; issuer/audience are canonical `org/agentId` strings.
+ * does not affect signatures; issuer/subject/audience are canonical `org/agentId`
+ * strings. `subject` is signed too, so it can't be swapped to re-point an authority's
+ * grant at a different actor.
  */
 export function canonicalAuthTokenClaims(claims: AuthTokenClaims): string {
   const normalized = normalizeAuthClaims(claims);
   return JSON.stringify({
     issuer: formatAddress(normalized.issuer),
+    subject: formatAddress(normalized.subject),
     audience: formatAddress(normalized.audience),
     scopes: normalized.scopes,
     issuedAt: normalized.issuedAt,
@@ -430,6 +444,10 @@ export async function verifyAuthToken(
 
   if (options.audience && formatAddress(options.audience) !== formatAddress(normalized.audience)) {
     return { accepted: false, reason: "audience-mismatch" };
+  }
+
+  if (options.requiredSubject && formatAddress(options.requiredSubject) !== formatAddress(normalized.subject)) {
+    return { accepted: false, reason: "subject-mismatch" };
   }
 
   if (options.requiredScopes?.length) {
