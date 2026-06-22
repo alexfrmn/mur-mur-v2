@@ -214,11 +214,21 @@ export const observeSignedPresence = async (
   now: number,
 ): Promise<DiscoveryCandidate | null> => {
   if (!isSignedPresenceFrameV1(signed)) return null;
-  const ok = await verify(
-    stablePresencePayload(signed.frame),
-    signed.signature,
-    signed.frame.signingPublicKey,
-  );
+  // Discovery frames are PUBLIC, untrusted traffic. A real Ed25519 verifier throws
+  // on malformed signature/public-key bytes (wrong length, bad base64) rather than
+  // returning false, and the wrapper guard only checks for non-empty strings — so a
+  // hostile/garbage frame must be DROPPED here, never allowed to escalate into an
+  // unhandled rejection that crashes the listen loop.
+  let ok = false;
+  try {
+    ok = await verify(
+      stablePresencePayload(signed.frame),
+      signed.signature,
+      signed.frame.signingPublicKey,
+    );
+  } catch {
+    return null;
+  }
   if (!ok) return null;
   return registry.observe(signed.frame, now);
 };

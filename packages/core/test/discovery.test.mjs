@@ -164,6 +164,19 @@ test("observeSignedPresence rejects a bad signature and a malformed wrapper", as
   assert.equal(reg.size(now), 0);
 });
 
+test("observeSignedPresence drops a frame when the verifier THROWS (malformed bytes)", async () => {
+  const reg = new CandidateRegistry();
+  const now = at("2026-06-22T13:00:10.000Z");
+  // Real Ed25519 verifiers throw on bad-length/garbage signature or key bytes;
+  // untrusted public frames must be dropped, not escalated to an unhandled rejection.
+  const verifyThrows = async () => {
+    throw new Error("signature of length 64 expected, got 9");
+  };
+  const r = await observeSignedPresence(reg, { frame: frame(), signature: "not-b64" }, verifyThrows, now);
+  assert.equal(r, null);
+  assert.equal(reg.size(now), 0);
+});
+
 test("observeSignedPresence verifies against the key the frame advertises", async () => {
   const reg = new CandidateRegistry();
   const now = at("2026-06-22T13:00:10.000Z");
