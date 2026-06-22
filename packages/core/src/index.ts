@@ -617,6 +617,60 @@ export interface StreamEnd {
 
 export type StreamFrame = StreamStart | StreamChunk | StreamEnd;
 
+const isFiniteNumber = (x: unknown): x is number =>
+  typeof x === "number" && Number.isFinite(x);
+
+/**
+ * Structural type guards for the stream wire frames. Pure shape checks (the
+ * canonical structural contract a cross-language implementation must satisfy),
+ * mirroring {@link isEnvelopeV1}. They do NOT validate stream semantics
+ * (chunkIndex bounds, totalBytes vs data, digest match) — that is the
+ * reassembler's job. The conformance suite asserts these agree with
+ * schema/protocol-v1.schema.json so spec and runtime can't drift.
+ */
+export const isStreamStart = (v: unknown): v is StreamStart => {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return (
+    o.kind === "stream.start" &&
+    typeof o.streamId === "string" && o.streamId.length > 0 &&
+    isFiniteNumber(o.chunkCount) &&
+    isFiniteNumber(o.totalBytes) &&
+    (o.contentType === undefined || typeof o.contentType === "string") &&
+    (o.startedAt === undefined || typeof o.startedAt === "string")
+  );
+};
+
+export const isStreamChunk = (v: unknown): v is StreamChunk => {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return (
+    o.kind === "stream.chunk" &&
+    typeof o.streamId === "string" && o.streamId.length > 0 &&
+    isFiniteNumber(o.chunkIndex) &&
+    isFiniteNumber(o.chunkCount) &&
+    typeof o.data === "string" &&
+    (o.sha256 === undefined || typeof o.sha256 === "string") &&
+    typeof o.isLast === "boolean"
+  );
+};
+
+export const isStreamEnd = (v: unknown): v is StreamEnd => {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return (
+    o.kind === "stream.end" &&
+    typeof o.streamId === "string" && o.streamId.length > 0 &&
+    isFiniteNumber(o.chunkCount) &&
+    isFiniteNumber(o.totalBytes) &&
+    (o.digest === undefined || typeof o.digest === "string") &&
+    (o.sha256 === undefined || typeof o.sha256 === "string")
+  );
+};
+
+export const isStreamFrame = (v: unknown): v is StreamFrame =>
+  isStreamStart(v) || isStreamChunk(v) || isStreamEnd(v);
+
 export interface ChunkStreamTextInput {
   streamId: string;
   text: string;
