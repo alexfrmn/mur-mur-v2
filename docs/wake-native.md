@@ -197,6 +197,56 @@ With those five steps in the launcher, a new Codex session brings up remote
 control, captures its own app-server thread, wires Murmur wake routing, and
 restarts the daemon without a manual copy/paste step.
 
+## Scoped Channels & Session Affinity
+
+The Codex autostart sequence above documents a real open problem: app-server
+instances are **isolated per client**, so a naive wake can fire the wrong
+session — or, when an agent has several sessions open, *every* session reacts to
+the same message (double-emit) and the daemon spawns a **competing thread**
+alongside the one a human is already attending. Native wake alone has no notion
+of which session "owns" the conversation.
+
+Scoped Channels closes that gap with a DB-backed **session-ownership lease**. For
+an addressed conversation, exactly one session of the addressed agent holds the
+lease; only that session emits, and every other session — and the native daemon
+wake — stays silent.
+
+**Lease store.** `SessionLeaseStore` lives in its own SQLite file with a separate
+WAL from `local_messages` (tables `channel_owner` + `session_presence`):
+
+- `claim_or_skip` — atomic single-statement compare-and-swap
+  (`INSERT … ON CONFLICT(conversation_id, member_slot) DO UPDATE … WHERE stale OR
+  same_session`, `token = token + 1 RETURNING token`). The caller that gets a
+  token owns the channel; everyone else skips.
+- `heartbeat` — keeps a held lease alive without bumping the token.
+- `isCurrentToken` — a per-turn fencing token, re-checked at outbound, so a
+  resurrected/raced session can't emit under a stale claim.
+- `registerSession` / `hasLiveInteractiveSession` — the presence registry the
+  wake gate consults.
+- `preemptPrefix` (optional) — lets a real interactive chat session reclaim a
+  channel from a fallback owner.
+
+**Wake becomes a presence-deferring, lease-gated fallback.** `createNativeLeaseGate`
+is injected into `WakeMonitor` as `leaseGate`. Before waking, the daemon checks
+session presence:
+
+- a **live interactive session** exists for the agent → the daemon wake
+  **defers** (it does *not* spawn a competing thread; the attended session
+  handles the message);
+- **no** live session → the daemon claims the lease and performs the **cold-wake**
+  fallback, exactly as native wake does today.
+
+**One claim across every delivery path.** Foreground-push, cold-start, and
+in-session MCP-channel delivery all follow the same rule: claim before any
+side-effect, fence the outbound by the lease token, suppress non-owners. The
+result is live-verified — N delivery sessions for one message resolve to
+**exactly one emit**, and the native daemon wake defers to the attended session
+instead of spawning a new thread.
+
+**Compatibility.** The whole feature sits behind `MURMUR_SCOPED_CHANNELS`
+(default **OFF**). With no lease gate set, `WakeMonitor` behaves exactly as
+described in the sections above — scoped channels is purely additive.
+
 ## Why not tmux / OpenClaw
 
 - **tmux send-keys** is fragile (races with human typing; `TIOCSTI` disabled on
