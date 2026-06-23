@@ -87,6 +87,7 @@ export class WakeMonitor {
     this.hook = options.hook || null;
     this.injector = options.injector || null;
     this.auditHook = options.auditHook || null;
+    this.leaseGate = options.leaseGate || null;
     this.notify = options.notify || null;
     this.loadBacklogAfter = options.loadBacklogAfter || null;
     this.now = options.now || (() => Date.now());
@@ -163,6 +164,30 @@ export class WakeMonitor {
       this.log("warn", "WakeMonitor audit requires approval", { msgId: payload.msgId, conversationId: payload.conversationId, from: payload.from });
       this.advanceCursor(payload);
       return;
+    }
+
+    // Scoped-channels lease gate (#82): the native daemon wake is a fallback owner.
+    // If a live chat session already owns this conversation, mute the native wake so it
+    // does not spawn a competing thread; otherwise claim and route as the cold-wake owner.
+    if (this.leaseGate) {
+      let decision;
+      try {
+        decision = await this.leaseGate(payload, this.peerFor(payload));
+      } catch (err) {
+        const e = err instanceof Error ? err : new Error(String(err));
+        decision = { allow: false, reason: `lease-gate-error:${e.message}` };
+      }
+      if (!decision || decision.allow !== true) {
+        this.log("info", "WakeMonitor lease mute (non-owner)", {
+          msgId: payload.msgId,
+          conversationId: payload.conversationId,
+          ownerSessionId: decision?.ownerSessionId ?? null,
+          reason: decision?.reason ?? "non-owner",
+        });
+        this.advanceCursor(payload);
+        return;
+      }
+      payload.leaseToken = decision.token ?? null;
     }
 
     try {
