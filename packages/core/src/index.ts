@@ -6,6 +6,9 @@ import { DatabaseSync } from "node:sqlite";
 // Agent discovery (presence frames + candidate registry)
 export * from "./discovery.js";
 
+// Scoped channels — session-ownership lease (session affinity, fencing token, presence-deferring wake gate)
+export * from "./lease.js";
+
 export type DeliveryMode = "at-least-once";
 
 export interface EnvelopeV1 {
