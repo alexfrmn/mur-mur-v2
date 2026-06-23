@@ -13,6 +13,7 @@ import { NotifyQueue, flushNotifyQueue, normalizeNotifyTargets } from "./notify-
 import { createCodexAppServerInjector } from "./codex-app-server-wake.mjs";
 import { startJetStreamAdvisoryDlqIfEnabled } from "./murmur-jetstream-advisory.mjs";
 import { WakeMonitor, createAuditShellHook, createShellHook, normalizeWakeConfig } from "./wake-monitor.mjs";
+import { SessionLeaseStore, createNativeLeaseGate } from "./lease.mjs";
 // vault-guard: optional content policy hook (not included in OSS release)
 
 const log = (level, msg, data) => {
@@ -104,6 +105,17 @@ log("info", "Daemon starting", {
 
 const store = new SQLiteDedupeOutboxStore(dbPath);
 const msgStore = new SQLiteMessageStore(dbPath);
+
+// Scoped-channels (#82): native daemon wake becomes a lease-gated fallback. Default OFF
+// (backward-compat: no lease -> WakeMonitor behaves exactly as before). Lease lives in its
+// own SQLite file (separate WAL) per review.
+const scopedChannelsEnabled = config.scopedChannels?.enabled ?? process.env.MURMUR_SCOPED_CHANNELS === "1";
+const nativeLeaseTtlMs = Number(process.env.MURMUR_LEASE_TTL_MS) || 20000;
+const leaseStore = scopedChannelsEnabled ? new SessionLeaseStore(path.join(dataDir, "lease.db")) : null;
+const nativeLeaseGate = leaseStore
+  ? createNativeLeaseGate({ store: leaseStore, agentId, ttlMs: nativeLeaseTtlMs, log })
+  : null;
+if (scopedChannelsEnabled) log("info", "Scoped-channels native lease gate enabled", { ttlMs: nativeLeaseTtlMs });
 const broker = new NatsBroker({
   url: natsUrl,
   token: natsToken,
@@ -165,6 +177,7 @@ const wakeMonitor = new WakeMonitor({
   ...wakeConfig,
   initialCursor: inboundCursor(),
   loadBacklogAfter: loadInboundAfter,
+  leaseGate: nativeLeaseGate,
   auditHook: createAuditShellHook({ command: wakeConfig.auditHook, log }),
   hook: createShellHook({ command: config.onReceive, log }),
   injector: async (payload, peer) => {
@@ -182,6 +195,7 @@ const proxyWakeMonitor = new WakeMonitor({
   initialCursor: inboundCursor(),
   auditHook: createAuditShellHook({ command: wakeConfig.auditHook, log }),
   hook: createShellHook({ command: config.proxyOnReceive, log }),
+  leaseGate: nativeLeaseGate,
   injector: async (payload, peer) => {
     if (peer.mode === "codex_app_server") {
       return createCodexAppServerInjector({ log })(payload, peer);
