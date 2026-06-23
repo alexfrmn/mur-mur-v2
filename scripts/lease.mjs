@@ -53,6 +53,12 @@ const buildClaimSql = (extraWhere) => `
 const CLAIM_SQL = buildClaimSql("");
 const CLAIM_PREEMPT_SQL = buildClaimSql("\n     OR channel_owner.owner_session_id LIKE ?");
 
+// Reserved session-id namespace for the daemon's cold-wake fallback owner. Interactive
+// session ids (foreground / mcp-channel / coldstart) MUST NOT start with this prefix, so that
+// a `preemptPrefix` of NATIVE_SESSION_PREFIX only ever reclaims the channel from the fallback,
+// never from a legitimate live session (review note, Stas 2026-06-23).
+export const NATIVE_SESSION_PREFIX = "native:";
+
 export class SessionLeaseStore {
   constructor(dbPath = ".data/lease.db") {
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -97,6 +103,8 @@ export class SessionLeaseStore {
   // Atomic claim. Call BEFORE any side-effect. Returns { won, token, ownerSessionId }.
   // `preemptPrefix` (optional): take over a current owner whose session id starts with it,
   //   even when that owner is still live — used so real chat sessions beat `native:` fallbacks.
+  //   Pass `NATIVE_SESSION_PREFIX`; interactive session ids must never start with that prefix,
+  //   so preemption can only reclaim from the daemon fallback, never from a real owner.
   claimOrSkip(conversationId, memberSlot, sessionId, ttlMs, now = Date.now(), preemptPrefix = null) {
     const row = preemptPrefix
       ? this._claimPreempt.get(conversationId, memberSlot, sessionId, now, ttlMs, `${preemptPrefix}%`)
@@ -119,6 +127,10 @@ export class SessionLeaseStore {
   }
 
   // Outbound fence: is `token` still the current owner token for this channel?
+  // INVARIANT: `token` is strictly monotonic per (conversation_id, member_slot) and is bumped on
+  // every successful claim, so `token === current` uniquely identifies the live claim epoch — a
+  // superseded or stale owner necessarily holds an older token. Fencing on the token alone is
+  // therefore sufficient; owner_session_id is implied by the token and need not be re-checked here.
   isCurrentToken(conversationId, memberSlot, token) {
     const row = this.db
       .prepare(`SELECT token FROM channel_owner WHERE conversation_id = ? AND member_slot = ?`)
@@ -159,7 +171,7 @@ export class SessionLeaseStore {
 // Interactive sessions claim with preemptPrefix="native:" so they reclaim instantly should the
 // native fallback have won during a presence gap.
 export function createNativeLeaseGate({ store, agentId, ttlMs = 20000, memberSlot, presenceTtlMs, now = () => Date.now(), log = () => {} }) {
-  const sessionId = `native:${agentId}`;
+  const sessionId = `${NATIVE_SESSION_PREFIX}${agentId}`;
   const slot = memberSlot || agentId;
   const pTtl = presenceTtlMs || ttlMs;
   return async (payload) => {
