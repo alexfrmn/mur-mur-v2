@@ -81,6 +81,19 @@ export class SessionLeaseStore {
       .run(now, sessionId).changes;
   }
 
+  // Is there a live (non-stale) interactive session for this agent? The native fallback wake
+  // defers to it (so it never spawns a competing thread while a chat window is attended).
+  hasLiveInteractiveSession(agentId, ttlMs, now = Date.now(), modes = ["foreground", "mcp-channel"]) {
+    const placeholders = modes.map(() => "?").join(",");
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM session_presence
+         WHERE agent_id = ? AND mode IN (${placeholders}) AND (? - heartbeat_at) <= ?`,
+      )
+      .get(agentId, ...modes, now, ttlMs);
+    return Number(row?.n ?? 0) > 0;
+  }
+
   // Atomic claim. Call BEFORE any side-effect. Returns { won, token, ownerSessionId }.
   // `preemptPrefix` (optional): take over a current owner whose session id starts with it,
   //   even when that owner is still live — used so real chat sessions beat `native:` fallbacks.
@@ -137,20 +150,27 @@ export class SessionLeaseStore {
   }
 }
 
-// Native-daemon wake is a FALLBACK owner (#82): it must NOT spawn a competing thread when a
-// live chat session already owns the channel. Returns a leaseGate(payload, peer) for WakeMonitor:
-//   - claims as `native:<agentId>` (no preempt);
-//   - allow=true only if it wins (no live owner, or stale, or it already owns);
-//   - allow=false when a live non-native session holds the channel -> native wake is muted.
-// A real chat session (foreground/mcp, #83) claims with preemptPrefix="native:" so it always
-// takes the channel back from this fallback.
-export function createNativeLeaseGate({ store, agentId, ttlMs = 20000, memberSlot, now = () => Date.now(), log = () => {} }) {
+// Native-daemon wake is a FALLBACK owner (#82): it must NOT spawn a competing thread while a
+// chat window is attended. Returns a leaseGate(payload, peer) for WakeMonitor that:
+//   1. defers (mute) if a live interactive session_presence row exists for the agent
+//      (foreground / mcp-channel sessions register+heartbeat presence, #83) — no race;
+//   2. otherwise claims the channel as `native:<agentId>` and allows the wake (cold fallback);
+//   3. mutes if some other live owner already holds the channel.
+// Interactive sessions claim with preemptPrefix="native:" so they reclaim instantly should the
+// native fallback have won during a presence gap.
+export function createNativeLeaseGate({ store, agentId, ttlMs = 20000, memberSlot, presenceTtlMs, now = () => Date.now(), log = () => {} }) {
   const sessionId = `native:${agentId}`;
   const slot = memberSlot || agentId;
+  const pTtl = presenceTtlMs || ttlMs;
   return async (payload) => {
     const conversationId = payload?.conversationId;
     if (!conversationId) return { allow: true, token: null, reason: "no-conversation" };
-    const res = store.claimOrSkip(conversationId, slot, sessionId, ttlMs, now());
+    const ts = now();
+    if (store.hasLiveInteractiveSession(agentId, pTtl, ts)) {
+      log("info", "native lease defer (live interactive session)", { conversationId });
+      return { allow: false, token: null, reason: "live-interactive-session" };
+    }
+    const res = store.claimOrSkip(conversationId, slot, sessionId, ttlMs, ts);
     if (res.won) {
       log("info", "native lease claimed (fallback wake)", { conversationId, token: res.token, ownerSessionId: sessionId });
       return { allow: true, token: res.token, ownerSessionId: sessionId };
