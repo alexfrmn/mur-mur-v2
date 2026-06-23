@@ -477,6 +477,7 @@ See [protocol-v1.md](docs/protocol-v1.md) for the full specification.
 *Agent integration & ops*
 - [x] MCP server with 7 tools — full agent integration
 - [x] Native wake (live session) — Claude asyncRewake + Codex app-server UDS, with self-healing thread re-seed (`WakeMonitor`)
+- [x] **Scoped channels & session affinity** (v2.4) — DB-backed session-ownership lease: for an addressed conversation only the **owning session of the addressed agent** responds; native wake is demoted to a presence-deferring fallback (no competing thread). N delivery sessions → **exactly 1 emit** (live-verified). Behind `MURMUR_SCOPED_CHANNELS` (default-OFF). Lease ships in `@murmurv2/core`; delivery helpers and the cold-start spawn-on-inbound path are repo-shipped (`scripts/codex-murmur-*`)
 - [x] Telegram/Discord/WhatsApp notification adapters
 - [x] Observability dashboard (real-time flow + 3D) + Prometheus metrics exporter (outbox depth, delivery latency, error rates)
 - [x] Reference deployment — Systemd + Docker, docker-compose (`deploy/docker-compose.messaging.yml`) + Kubernetes manifests (`deploy/kubernetes/`)
@@ -487,12 +488,11 @@ See [protocol-v1.md](docs/protocol-v1.md) for the full specification.
 - [x] **Versioned protocol spec** — machine-readable schema (`protocol-v1.schema.json`) + prose (`docs/protocol-v1.md`) + compatibility matrix (`docs/protocol-compatibility.md`)
 
 *Distribution*
-- [x] **npm — public** under `@murmurv2/*` (MIT): `core`/`federation`/`broker-nats` @ `0.2.0`, `security`/`observability` @ `0.1.1`, the rest @ `0.1.0`
+- [x] **npm — public** under `@murmurv2/*` (MIT): `core` @ `0.3.0` (adds the scoped-channels lease primitive), `federation`/`broker-nats` @ `0.2.0`, `security`/`observability` @ `0.1.1`, the rest @ `0.1.0`
 
 ### In Progress (next up)
 - [ ] **Auth/authz end-to-end** — the mechanism is shipped; wire it into the daemon (read `MURMUR_ENFORCE_AUTH` + build the authorizer from the roster) so enforcement is live, then provision org-authority tokens
 - [ ] **WebSocket transport** — `@murmurv2/broker-ws` relay + client are shipped (delivery, ACK correlation, dedupe, invalid-envelope NACKs); remaining: browser/edge deployment examples + hardening
-- [ ] **Always-on wake (dead session)** — a repo-shipped version + strict no-live-session proof (today it's an out-of-repo cold-start spawn-on-inbound sidecar in the reference Codex deployment)
 
 ### Needs a real external partner (mechanism done, gated on a counterpart)
 - [ ] **Federation** — `org/agentId` addressing, Ed25519-signed key directory, `fed.*` leaf-node/account contract, `RosterStore` (pinned-key trust + monotonic-version replay guard), and account-config renderer are **live-proven in isolation** (cross-org sealed+signed delivery on real NATS accounts + leaf-node topology + least-privilege pub/sub). Gate: a **second real partner org**
