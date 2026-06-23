@@ -33,7 +33,9 @@ const DDL = `
 
 // Single-statement atomic compare-and-swap. WHERE on DO UPDATE makes a live, non-stale
 // foreign owner a no-op (no RETURNING row) — that is the "skip" branch.
-const CLAIM_SQL = `
+// The optional `extraWhere` lets a real session preempt a low-priority fallback owner
+// (e.g. a foreground chat preempting a `native:` cold-wake owner) even when not stale.
+const buildClaimSql = (extraWhere) => `
   INSERT INTO channel_owner
     (conversation_id, member_slot, owner_session_id, token, epoch, heartbeat_at, ttl_ms)
     VALUES (?, ?, ?, 1, 1, ?, ?)
@@ -44,9 +46,12 @@ const CLAIM_SQL = `
     heartbeat_at     = excluded.heartbeat_at,
     ttl_ms           = excluded.ttl_ms
   WHERE channel_owner.owner_session_id = excluded.owner_session_id
-     OR (excluded.heartbeat_at - channel_owner.heartbeat_at) > channel_owner.ttl_ms
+     OR (excluded.heartbeat_at - channel_owner.heartbeat_at) > channel_owner.ttl_ms${extraWhere}
   RETURNING owner_session_id AS ownerSessionId, token, epoch
 `;
+
+const CLAIM_SQL = buildClaimSql("");
+const CLAIM_PREEMPT_SQL = buildClaimSql("\n     OR channel_owner.owner_session_id LIKE ?");
 
 export class SessionLeaseStore {
   constructor(dbPath = ".data/lease.db") {
@@ -54,6 +59,7 @@ export class SessionLeaseStore {
     this.db = new DatabaseSync(dbPath);
     this.db.exec(DDL);
     this._claim = this.db.prepare(CLAIM_SQL);
+    this._claimPreempt = this.db.prepare(CLAIM_PREEMPT_SQL);
   }
 
   // S0.0 session registry. Upsert a live session's presence row.
@@ -76,8 +82,12 @@ export class SessionLeaseStore {
   }
 
   // Atomic claim. Call BEFORE any side-effect. Returns { won, token, ownerSessionId }.
-  claimOrSkip(conversationId, memberSlot, sessionId, ttlMs, now = Date.now()) {
-    const row = this._claim.get(conversationId, memberSlot, sessionId, now, ttlMs);
+  // `preemptPrefix` (optional): take over a current owner whose session id starts with it,
+  //   even when that owner is still live — used so real chat sessions beat `native:` fallbacks.
+  claimOrSkip(conversationId, memberSlot, sessionId, ttlMs, now = Date.now(), preemptPrefix = null) {
+    const row = preemptPrefix
+      ? this._claimPreempt.get(conversationId, memberSlot, sessionId, now, ttlMs, `${preemptPrefix}%`)
+      : this._claim.get(conversationId, memberSlot, sessionId, now, ttlMs);
     if (row && row.ownerSessionId === sessionId) {
       return { won: true, token: Number(row.token), ownerSessionId: sessionId };
     }
@@ -125,4 +135,27 @@ export class SessionLeaseStore {
   close() {
     this.db.close();
   }
+}
+
+// Native-daemon wake is a FALLBACK owner (#82): it must NOT spawn a competing thread when a
+// live chat session already owns the channel. Returns a leaseGate(payload, peer) for WakeMonitor:
+//   - claims as `native:<agentId>` (no preempt);
+//   - allow=true only if it wins (no live owner, or stale, or it already owns);
+//   - allow=false when a live non-native session holds the channel -> native wake is muted.
+// A real chat session (foreground/mcp, #83) claims with preemptPrefix="native:" so it always
+// takes the channel back from this fallback.
+export function createNativeLeaseGate({ store, agentId, ttlMs = 20000, memberSlot, now = () => Date.now(), log = () => {} }) {
+  const sessionId = `native:${agentId}`;
+  const slot = memberSlot || agentId;
+  return async (payload) => {
+    const conversationId = payload?.conversationId;
+    if (!conversationId) return { allow: true, token: null, reason: "no-conversation" };
+    const res = store.claimOrSkip(conversationId, slot, sessionId, ttlMs, now());
+    if (res.won) {
+      log("info", "native lease claimed (fallback wake)", { conversationId, token: res.token, ownerSessionId: sessionId });
+      return { allow: true, token: res.token, ownerSessionId: sessionId };
+    }
+    log("info", "native lease skip (live owner holds channel)", { conversationId, ownerSessionId: res.ownerSessionId });
+    return { allow: false, token: null, ownerSessionId: res.ownerSessionId, reason: "live-owner" };
+  };
 }
