@@ -7,10 +7,10 @@ import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { NatsBroker } from "@murmurv2/broker-nats";
-import { SQLiteDedupeOutboxStore, SQLiteMessageStore, stableEnvelopePayload } from "@murmurv2/core";
+import { ChannelRosterStore, SQLiteDedupeOutboxStore, SQLiteMessageStore, stableEnvelopePayload } from "@murmurv2/core";
 import { decryptPayload, verifyEnvelopeSignature } from "@murmurv2/security";
 import { NotifyQueue, flushNotifyQueue, normalizeNotifyTargets } from "./notify-router.mjs";
-import { createCodexAppServerInjector } from "./codex-app-server-wake.mjs";
+import { createChannelThreadStartBindingResolver, createCodexAppServerInjector } from "./codex-app-server-wake.mjs";
 import { startJetStreamAdvisoryDlqIfEnabled } from "./murmur-jetstream-advisory.mjs";
 import { WakeMonitor, createAuditShellHook, createShellHook, normalizeWakeConfig } from "./wake-monitor.mjs";
 import { SessionLeaseStore, createNativeLeaseGate } from "./lease.mjs";
@@ -116,6 +116,16 @@ const nativeLeaseGate = leaseStore
   ? createNativeLeaseGate({ store: leaseStore, agentId, ttlMs: nativeLeaseTtlMs, log })
   : null;
 if (scopedChannelsEnabled) log("info", "Scoped-channels native lease gate enabled", { ttlMs: nativeLeaseTtlMs });
+
+const channelRosterConfig = config.channelRoster || {};
+const channelRosterEnabled = channelRosterConfig.enabled ?? process.env.MURMUR_CHANNEL_ROSTER === "1";
+const channelRosterPath = channelRosterConfig.path || process.env.MURMUR_CHANNEL_ROSTER_PATH || path.join(dataDir, "channel-roster.db");
+const channelRosterStore = channelRosterEnabled ? new ChannelRosterStore(channelRosterPath) : null;
+const threadStartBindingResolver = channelRosterStore
+  ? createChannelThreadStartBindingResolver({ rosterStore: channelRosterStore, agentId, log })
+  : null;
+const codexAppServerInjector = createCodexAppServerInjector({ log, resolveThreadStartBinding: threadStartBindingResolver });
+if (channelRosterEnabled) log("info", "Channel roster thread-start binding enabled", { channelRosterPath });
 const broker = new NatsBroker({
   url: natsUrl,
   token: natsToken,
@@ -182,7 +192,7 @@ const wakeMonitor = new WakeMonitor({
   hook: createShellHook({ command: config.onReceive, log }),
   injector: async (payload, peer) => {
     if (peer.mode === "codex_app_server") {
-      return createCodexAppServerInjector({ log })(payload, peer);
+      return codexAppServerInjector(payload, peer);
     }
     throw new Error(`wake-native-mode-unsupported:${peer.mode}`);
   },
@@ -198,7 +208,7 @@ const proxyWakeMonitor = new WakeMonitor({
   leaseGate: nativeLeaseGate,
   injector: async (payload, peer) => {
     if (peer.mode === "codex_app_server") {
-      return createCodexAppServerInjector({ log })(payload, peer);
+      return codexAppServerInjector(payload, peer);
     }
     throw new Error(`wake-native-mode-unsupported:${peer.mode}`);
   },

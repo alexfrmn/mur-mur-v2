@@ -6,8 +6,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { WebSocketServer } from "ws";
+import { ChannelRosterStore } from "../packages/core/dist/src/index.js";
 import { WakeMonitor, normalizeWakeConfig } from "../scripts/wake-monitor.mjs";
-import { buildCodexTurnText, buildTurnStartRequest, CodexAppServerClient, createCodexAppServerInjector } from "../scripts/codex-app-server-wake.mjs";
+import {
+  buildCodexTurnText,
+  buildThreadStartParams,
+  buildTurnStartRequest,
+  CodexAppServerClient,
+  createChannelThreadStartBindingResolver,
+  createCodexAppServerInjector,
+} from "../scripts/codex-app-server-wake.mjs";
 
 const payload = {
   from: "agent-jarvis",
@@ -50,6 +58,31 @@ test("buildTurnStartRequest builds Codex turn/start params", () => {
   assert.equal(request.params.threadId, "thread-1");
   assert.equal(request.params.responsesapiClientMetadata.murmur_msg_id, payload.msgId);
   assert.match(request.params.input[0].text, /msgId=msg-codex-1/);
+});
+
+test("buildThreadStartParams applies optional channel personality binding", () => {
+  const params = buildThreadStartParams({
+    model: "gpt-5",
+    personality: "codex-writer",
+    baseInstructions: "Write concise engineering notes.",
+    metadata: { murmur_channel_id: "chan-1" },
+  });
+
+  assert.equal(params.model, "gpt-5");
+  assert.equal(params.personality, "codex-writer");
+  assert.equal(params.baseInstructions, "Write concise engineering notes.");
+  assert.equal(params.modelProvider, null);
+  assert.equal(params.ephemeral, false);
+});
+
+test("buildThreadStartParams preserves legacy nulled defaults without binding", () => {
+  const params = buildThreadStartParams();
+
+  assert.equal(params.model, null);
+  assert.equal(params.personality, null);
+  assert.equal(params.baseInstructions, null);
+  assert.equal(params.modelProvider, null);
+  assert.equal(params.ephemeral, false);
 });
 
 test("Codex app-server client initializes before turn/start over WS-over-UDS", async () => {
@@ -216,6 +249,95 @@ test("Codex app-server injector seeds missing app-server threads", async () => {
   assert.equal(peer.threadId, "fresh-thread");
   assert.deepEqual(calls.map((call) => call.method), ["thread/start", "turn/start"]);
   assert.equal(calls[1].params.threadId, "fresh-thread");
+});
+
+test("Codex app-server injector seeds thread with resolved channel member binding", async () => {
+  const calls = [];
+  class FakeClient {
+    async request(method, params) {
+      calls.push({ method, params });
+      if (method === "thread/start") return { thread: { id: "fresh-thread" } };
+      return { turn: { id: "turn-1" } };
+    }
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "murmur-codex-roster-"));
+  const roster = new ChannelRosterStore(path.join(dir, "channel-roster.db"));
+  roster.createChannel({
+    channelId: "chan:codex:writer",
+    conversationId: payload.conversationId,
+    type: "dm",
+    members: [{
+      memberId: "codex-writer",
+      memberSlot: "agent-codex-volt:writer",
+      agentId: "agent-codex-volt",
+      personaId: "codex-writer",
+      model: "gpt-5",
+      baseInstructionsHash: "sha256:writer-v1",
+    }],
+  });
+  const injector = createCodexAppServerInjector({
+    Client: FakeClient,
+    resolveThreadStartBinding: createChannelThreadStartBindingResolver({
+      rosterStore: roster,
+      agentId: "agent-codex-volt",
+      baseInstructionsResolver: () => "Write concise engineering notes.",
+    }),
+  });
+
+  const result = await injector(payload, { mode: "codex_app_server", socketPath: "/tmp/codex.sock" });
+
+  assert.deepEqual(result, { turn: { id: "turn-1" } });
+  assert.equal(calls[0].method, "thread/start");
+  assert.equal(calls[0].params.model, "gpt-5");
+  assert.equal(calls[0].params.personality, "codex-writer");
+  assert.equal(calls[0].params.baseInstructions, "Write concise engineering notes.");
+  assert.equal(calls[1].method, "turn/start");
+  assert.equal(calls[1].params.responsesapiClientMetadata.murmur_channel_id, "chan:codex:writer");
+  assert.equal(calls[1].params.responsesapiClientMetadata.murmur_member_id, "codex-writer");
+  assert.equal(calls[1].params.responsesapiClientMetadata.murmur_base_instructions_hash, "sha256:writer-v1");
+});
+
+test("channel thread-start binding resolver returns null without member or agent identity", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "murmur-codex-roster-no-id-"));
+  const roster = new ChannelRosterStore(path.join(dir, "channel-roster.db"));
+  roster.createChannel({
+    channelId: "chan:codex:no-id",
+    conversationId: payload.conversationId,
+    type: "dm",
+    members: [{ memberId: "codex-writer", agentId: "agent-codex-volt" }],
+  });
+  const resolveBinding = createChannelThreadStartBindingResolver({ rosterStore: roster });
+
+  const binding = await resolveBinding(payload, {});
+
+  assert.equal(binding, null);
+  roster.close();
+});
+
+test("Codex app-server injector ignores remote payload thread-start binding", async () => {
+  const calls = [];
+  class FakeClient {
+    async request(method, params) {
+      calls.push({ method, params });
+      if (method === "thread/start") return { thread: { id: "fresh-thread" } };
+      return { turn: { id: "turn-1" } };
+    }
+  }
+  const injector = createCodexAppServerInjector({ Client: FakeClient });
+
+  await injector({
+    ...payload,
+    threadStartBinding: {
+      model: "remote-controlled-model",
+      personality: "remote-controlled-persona",
+      baseInstructions: "remote instructions",
+    },
+  }, { mode: "codex_app_server", socketPath: "/tmp/codex.sock" });
+
+  assert.equal(calls[0].method, "thread/start");
+  assert.equal(calls[0].params.model, null);
+  assert.equal(calls[0].params.personality, null);
+  assert.equal(calls[0].params.baseInstructions, null);
 });
 
 test("Codex app-server injector fails loud without socket", async () => {

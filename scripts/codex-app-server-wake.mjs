@@ -1,4 +1,5 @@
 import WebSocket from "ws";
+import { buildChannelThreadStartBinding } from "@murmurv2/core";
 
 const DEFAULT_TIMEOUT_MS = 10000;
 const INITIALIZE_TIMEOUT_MS = 10000;
@@ -25,8 +26,8 @@ export const buildTurnStartRequest = ({ id = 1, threadId, text, metadata = {} })
   },
 });
 
-const buildThreadStartParams = () => ({
-  model: null,
+export const buildThreadStartParams = (binding = null) => ({
+  model: binding?.model ?? null,
   modelProvider: null,
   cwd: null,
   runtimeWorkspaceRoots: null,
@@ -36,9 +37,9 @@ const buildThreadStartParams = () => ({
   permissions: null,
   config: null,
   serviceName: null,
-  baseInstructions: null,
+  baseInstructions: binding?.baseInstructions ?? null,
   developerInstructions: null,
-  personality: null,
+  personality: binding?.personality ?? null,
   ephemeral: false,
   sessionStartSource: null,
   threadSource: null,
@@ -153,13 +154,52 @@ export class CodexAppServerClient {
   }
 }
 
-export const createCodexAppServerInjector = ({ Client = CodexAppServerClient, log = () => {}, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) => {
+const pickSingleOpenChannel = (channels) => {
+  const open = (channels || []).filter((channel) => !channel.closedAt);
+  return open.length === 1 ? open[0] : null;
+};
+
+export const createChannelThreadStartBindingResolver = ({ rosterStore, agentId, baseInstructionsResolver = null, log = () => {} } = {}) => {
+  if (!rosterStore) return null;
+  return async (payload, peer = {}) => {
+    const channelId = payload?.channelId || peer.channelId || pickSingleOpenChannel(rosterStore.listChannelsForConversation(payload?.conversationId || ""))?.channelId;
+    if (!channelId) return null;
+
+    const memberId = payload?.addresseeMemberId || peer.memberId;
+    const effectiveAgentId = agentId || peer.agentId;
+    const member = memberId
+      ? rosterStore.getChannelMember(channelId, memberId)
+      : effectiveAgentId
+        ? rosterStore.findActiveChannelMemberForAgent(channelId, effectiveAgentId)
+        : null;
+    if (!member || member.leftAt) return null;
+
+    const baseInstructions = typeof baseInstructionsResolver === "function"
+      ? await baseInstructionsResolver(member, payload, peer)
+      : peer.baseInstructions ?? null;
+    const binding = buildChannelThreadStartBinding({ member, baseInstructions });
+    log("info", "Codex app-server channel binding resolved", {
+      msgId: payload?.msgId,
+      channelId: member.channelId,
+      memberId: member.memberId,
+      agentId: member.agentId,
+      personaId: member.personaId ?? null,
+      model: member.model ?? null,
+      hasBaseInstructions: !!baseInstructions,
+    });
+    return binding;
+  };
+};
+
+export const createCodexAppServerInjector = ({ Client = CodexAppServerClient, log = () => {}, timeoutMs = DEFAULT_TIMEOUT_MS, resolveThreadStartBinding = null } = {}) => {
   return async (payload, peer) => {
     const socketPath = peer?.socketPath || peer?.target;
     if (!socketPath) throw new Error(`codex-app-server-socket-missing:${payload.from}`);
 
     const client = new Client({ socketPath, timeoutMs });
     const text = buildCodexTurnText(payload);
+    const threadStartBinding = peer?.threadStartBinding ?? (resolveThreadStartBinding ? await resolveThreadStartBinding(payload, peer) : null);
+    const bindingMetadata = threadStartBinding?.metadata ?? {};
     const startTurn = (threadId) => client.request("turn/start", {
       threadId,
       input: [{ type: "text", text, text_elements: [] }],
@@ -167,12 +207,13 @@ export const createCodexAppServerInjector = ({ Client = CodexAppServerClient, lo
         murmur_msg_id: payload.msgId || "",
         murmur_conversation_id: payload.conversationId || "",
         murmur_from: payload.from || "",
+        ...bindingMetadata,
       },
     });
 
     let threadId = peer?.threadId;
     if (!threadId) {
-      const started = await client.request("thread/start", buildThreadStartParams());
+      const started = await client.request("thread/start", buildThreadStartParams(threadStartBinding));
       threadId = started?.thread?.id;
       if (!threadId) throw new Error(`codex-app-server-thread-start-missing:${payload.from}`);
       peer.threadId = threadId;
@@ -185,7 +226,7 @@ export const createCodexAppServerInjector = ({ Client = CodexAppServerClient, lo
     } catch (err) {
       const e = err instanceof Error ? err : new Error(String(err));
       if (!e.message.startsWith("codex-app-server-error:thread not found:")) throw e;
-      const started = await client.request("thread/start", buildThreadStartParams());
+      const started = await client.request("thread/start", buildThreadStartParams(threadStartBinding));
       threadId = started?.thread?.id;
       if (!threadId) throw new Error(`codex-app-server-thread-start-missing:${payload.from}`);
       peer.threadId = threadId;

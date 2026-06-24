@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Phase N / N1 channel roster primitives** — `@murmurv2/core` now exposes `ChannelRosterStore` plus typed `ChannelRecord` / `ChannelMemberRecord` APIs. The roster keeps `channelId` distinct from legacy `conversationId`, stores `channels` / `channel_members` in a dedicated SQLite store, preserves existing message-history APIs, and reserves member-level `personaId`, `model`, `baseInstructionsHash`, and `eligibility` fields for N2 addressing and N3 personality binding.
+- **Phase N / N2 addressing policy primitive** — `ChannelRosterStore.evaluateAddressing()` returns a shared reject/append/wake decision for `channelId` + explicit addressee flows: legacy no-channel remains broadcast, non-members are rejected, addressed members wake, and observers append history while staying muted.
+- **Phase N / N3 personality binding** — `buildChannelThreadStartBinding()` projects a `ChannelMemberRecord` into Codex app-server `thread/start` overrides (`model`, `personality`, optional `baseInstructions`, and audit metadata). Daemon wiring is opt-in only (`channelRoster.enabled` or `MURMUR_CHANNEL_ROSTER=1`) and leaves legacy wake behavior unchanged by default.
+- **Phase N / N6 MCP roster surface** — `@murmurv2/mcp-server` exposes `channel_create`, `channel_list`, `channel_members`, and `channel_evaluate_addressing`, backed by `MURMUR_CHANNEL_ROSTER_PATH` (default `DATA_DIR/channel-roster.db`) so agents and UI can manage rosters without direct SQLite access.
+
 ### Pending
 - **Auth enforcement end-to-end** — the broker ingress hook + `authorizeInbound` exist; the daemon does not yet wire them (so `MURMUR_ENFORCE_AUTH` is not enforced end-to-end). Requires daemon roster/identity wiring + token provisioning.
 
