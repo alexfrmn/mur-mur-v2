@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Production file-level deploy tooling** — `deploy/production-file-deploy.sh`
+  now builds gitignored `dist/` artifacts before copying the live-runtime
+  allowlist, includes Phase N core/MCP/channel roster files, and refuses to
+  deploy if channel/personality markers are missing. Added
+  `deploy/production-channel-roster-ops.sh` plus docs for the non-checkout
+  production tree.
 - **Phase N / N1 channel roster primitives** — `@murmurv2/core` now exposes `ChannelRosterStore` plus typed `ChannelRecord` / `ChannelMemberRecord` APIs. The roster keeps `channelId` distinct from legacy `conversationId`, stores `channels` / `channel_members` in a dedicated SQLite store, preserves existing message-history APIs, and reserves member-level `personaId`, `model`, `baseInstructionsHash`, and `eligibility` fields for N2 addressing and N3 personality binding.
 - **Phase N / N2 addressing policy primitive** — `ChannelRosterStore.evaluateAddressing()` returns a shared reject/append/wake decision for `channelId` + explicit addressee flows: legacy no-channel remains broadcast, non-members are rejected, addressed members wake, and observers append history while staying muted.
 - **Phase N / N3 personality binding** — `buildChannelThreadStartBinding()` projects a `ChannelMemberRecord` into Codex app-server `thread/start` overrides (`model`, `personality`, optional `baseInstructions`, and audit metadata). Daemon wiring is opt-in only (`channelRoster.enabled` or `MURMUR_CHANNEL_ROSTER=1`) and leaves legacy wake behavior unchanged by default.
