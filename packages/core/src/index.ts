@@ -9,6 +9,9 @@ export * from "./discovery.js";
 // Scoped channels — session-ownership lease (session affinity, fencing token, presence-deferring wake gate)
 export * from "./lease.js";
 
+// Phase N — typed channel roster (channelId distinct from legacy conversationId)
+export * from "./channel.js";
+
 export type DeliveryMode = "at-least-once";
 
 export interface EnvelopeV1 {

@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@murmurv2/broker-nats": "^0.2.0",
-    "@murmurv2/core": "^0.2.0",
+    "@murmurv2/core": "^0.3.0",
     "@murmurv2/security": "^0.1.0"
   },
   "license": "MIT",
@@ -26,5 +26,5 @@
     "dist/src",
     "LICENSE"
   ],
-  "description": "Murmur V2 MCP server \u2014 7 tools for agent-to-agent messaging over the Model Context Protocol."
+  "description": "Murmur V2 MCP server \u2014 agent-to-agent messaging and scoped-channel roster tools over the Model Context Protocol."
 }

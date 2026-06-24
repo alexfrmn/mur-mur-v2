@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import {
+  ChannelRosterStore,
   SQLiteDedupeOutboxStore,
   SQLiteMessageStore,
   stableEnvelopePayload,
@@ -44,6 +45,7 @@ interface AgentConfig {
 const dataDir = process.env.DATA_DIR || ".data";
 const configPath = path.join(dataDir, "agent-config.json");
 const dbPath = process.env.MURMUR_STORE_PATH ?? path.join(dataDir, "murmur.db");
+const channelRosterPath = process.env.MURMUR_CHANNEL_ROSTER_PATH ?? path.join(dataDir, "channel-roster.db");
 
 let agentConfig: AgentConfig | null = null;
 try {
@@ -53,6 +55,7 @@ try {
 }
 
 const store = new SQLiteMessageStore(dbPath);
+const channelRoster = new ChannelRosterStore(channelRosterPath);
 
 // Outbox store — shared with daemon, only created if agent config exists
 let outbox: SQLiteDedupeOutboxStore | null = null;
@@ -150,6 +153,60 @@ const handleTool = async (name: string, args: Record<string, unknown>): Promise<
     const limit = Number(args.limit ?? 50);
     const messages = await store.searchMessages(query, Number.isFinite(limit) ? limit : 50);
     return { messages: messages.map(asMessage) };
+  }
+
+  if (name === "channel_create") {
+    const channelId = String(args.channelId ?? "").trim();
+    if (!channelId) throw new Error("channelId is required");
+    const conversationId = String(args.conversationId ?? "").trim();
+    if (!conversationId) throw new Error("conversationId is required");
+    const type = String(args.type ?? "").trim();
+    if (!["dm", "group", "consult"].includes(type)) throw new Error("type must be one of: dm, group, consult");
+    const members = Array.isArray(args.members) ? args.members as Array<Record<string, unknown>> : [];
+    const channel = channelRoster.createChannel({
+      channelId,
+      conversationId,
+      type: type as "dm" | "group" | "consult",
+      metadata: typeof args.metadata === "object" && args.metadata && !Array.isArray(args.metadata) ? args.metadata as Record<string, unknown> : undefined,
+      members: members.map((member) => ({
+        memberId: String(member.memberId ?? "").trim(),
+        memberSlot: member.memberSlot === undefined ? undefined : String(member.memberSlot),
+        agentId: String(member.agentId ?? "").trim(),
+        role: member.role === undefined ? undefined : String(member.role),
+        personaId: member.personaId === undefined ? undefined : String(member.personaId),
+        model: member.model === undefined ? undefined : String(member.model),
+        baseInstructionsHash: member.baseInstructionsHash === undefined ? undefined : String(member.baseInstructionsHash),
+        eligibility: typeof member.eligibility === "object" && member.eligibility && !Array.isArray(member.eligibility) ? member.eligibility as Record<string, unknown> : undefined,
+        metadata: typeof member.metadata === "object" && member.metadata && !Array.isArray(member.metadata) ? member.metadata as Record<string, unknown> : undefined,
+      })),
+    });
+    return { channel, members: channelRoster.listChannelMembers(channelId) };
+  }
+
+  if (name === "channel_list") {
+    const conversationId = String(args.conversationId ?? "").trim();
+    if (!conversationId) throw new Error("conversationId is required");
+    return { channels: channelRoster.listChannelsForConversation(conversationId) };
+  }
+
+  if (name === "channel_members") {
+    const channelId = String(args.channelId ?? "").trim();
+    if (!channelId) throw new Error("channelId is required");
+    return { members: channelRoster.listChannelMembers(channelId) };
+  }
+
+  if (name === "channel_evaluate_addressing") {
+    const selfAgentId = String(args.selfAgentId ?? "").trim();
+    if (!selfAgentId) throw new Error("selfAgentId is required");
+    return {
+      decision: channelRoster.evaluateAddressing({
+        channelId: args.channelId === undefined ? undefined : String(args.channelId),
+        selfAgentId,
+        senderAgentId: args.senderAgentId === undefined ? undefined : String(args.senderAgentId),
+        addresseeMemberId: args.addresseeMemberId === undefined ? undefined : String(args.addresseeMemberId),
+        addresseeAgentId: args.addresseeAgentId === undefined ? undefined : String(args.addresseeAgentId),
+      }),
+    };
   }
 
   // === New agent-to-agent tools (require agent config) ===
@@ -416,6 +473,75 @@ const tools = [
         limit: { type: "number" },
       },
       required: ["query"],
+    },
+  },
+  {
+    name: "channel_create",
+    description: "Create a typed Murmur channel roster entry with optional members.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        channelId: { type: "string", description: "Stable channel/routing ID, distinct from conversationId" },
+        conversationId: { type: "string", description: "Legacy history label associated with the channel" },
+        type: { type: "string", enum: ["dm", "group", "consult"] },
+        metadata: { type: "object" },
+        members: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              memberId: { type: "string" },
+              memberSlot: { type: "string" },
+              agentId: { type: "string" },
+              role: { type: "string" },
+              personaId: { type: "string" },
+              model: { type: "string" },
+              baseInstructionsHash: { type: "string" },
+              eligibility: { type: "object" },
+              metadata: { type: "object" },
+            },
+            required: ["memberId", "agentId"],
+          },
+        },
+      },
+      required: ["channelId", "conversationId", "type"],
+    },
+  },
+  {
+    name: "channel_list",
+    description: "List typed channels associated with a legacy conversationId.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        conversationId: { type: "string" },
+      },
+      required: ["conversationId"],
+    },
+  },
+  {
+    name: "channel_members",
+    description: "List active and historical members for a typed channel.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        channelId: { type: "string" },
+      },
+      required: ["channelId"],
+    },
+  },
+  {
+    name: "channel_evaluate_addressing",
+    description: "Evaluate channel membership/addressing into reject/append/wake decisions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        channelId: { type: "string" },
+        selfAgentId: { type: "string" },
+        senderAgentId: { type: "string" },
+        addresseeMemberId: { type: "string" },
+        addresseeAgentId: { type: "string" },
+      },
+      required: ["selfAgentId"],
     },
   },
   {
